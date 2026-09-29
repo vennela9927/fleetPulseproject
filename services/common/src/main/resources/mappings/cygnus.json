@@ -1,0 +1,24 @@
+{
+  "oem": "CYGNUS",
+  "version": 1,
+  "wmi": "CYG",
+  "fields": {
+    "vin":      { "path": "deviceVin" },
+    "seq":      { "path": "counter" },
+    "ts":       { "path": "capturedAt", "transform": "epoch_s" },
+    "lat":      { "path": "signals[name=LAT].value" },
+    "lon":      { "path": "signals[name=LON].value" },
+    "speedKmh": { "path": "signals[name=SPEED_KPH].value" },
+    "odoKm":    { "path": "signals[name=ODO_KM].value" },
+    "engineOn": { "path": "signals[name=POWER_STATE].value", "transform": "map",
+                  "map": { "DRIVE": "true", "READY": "true", "*": "false" } },
+    "socPct":   { "path": "signals[name=SOC].value" },
+    "sohPct":   { "path": "signals[name=SOH].value" },
+    "battV":    { "path": "signals[name=LV_BATT_V].value" },
+    "dtc":      { "path": "diag.codes", "transform": "list" },
+    "evt":      { "path": "eventType", "transform": "map",
+                  "map": { "harsh_braking": "HARSH_BRAKE", "harsh_acceleration": "HARSH_ACCEL",
+                           "charge_start": "CHARGING_START", "charge_stop": "CHARGING_STOP",
+                           "power_on": "IGNITION_ON", "power_off": "IGNITION_OFF", "*": "PERIODIC" } }
+  }
+}

@@ -1,0 +1,43 @@
+# Build output
+target/
+build/
+dist/
+out/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Node
+node_modules/
+web/coverage/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Secrets / local config
+.env
+*.pem
+*.key
+
+# Generated data
+data/
+*.parquet
+models/*.bin
+models/*.txt
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl

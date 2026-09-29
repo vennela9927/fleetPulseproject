@@ -1,0 +1,152 @@
+name: fleetpulse
+
+# One-command local stack:  docker compose up -d
+# Memory limits keep the whole stack inside ~9 GB on a 16 GB laptop.
+
+x-s3-env: &s3-env
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-fleets3}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-fleets3_dev_secret}
+
+services:
+  # ---------------------------------------------------------------- messaging
+  kafka:
+    image: apache/kafka:3.8.0
+    hostname: kafka
+    ports: ["9094:9094"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: 24
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
+    volumes: [kafka-data:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    deploy: { resources: { limits: { memory: 1g } } }
+
+  kafka-init:
+    image: apache/kafka:3.8.0
+    depends_on: { kafka: { condition: service_healthy } }
+    entrypoint: ["/bin/bash", "/scripts/create-topics.sh"]
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      TOPIC_REPLICATION: 1
+    volumes: [./infra/kafka/create-topics.sh:/scripts/create-topics.sh:ro]
+    restart: "no"
+
+  # ---------------------------------------------------------------- storage
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports: ["5432:5432"]
+    environment:
+      POSTGRES_DB: fleet
+      POSTGRES_USER: fleet_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fleet_admin_dev}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-fleet_app_dev}
+      SERVICE_DB_PASSWORD: ${SERVICE_DB_PASSWORD:-fleet_service_dev}
+    command: >
+      postgres -c shared_buffers=256MB -c work_mem=16MB -c maintenance_work_mem=128MB
+               -c max_connections=200 -c shared_preload_libraries=pg_stat_statements
+               -c pg_stat_statements.track=all
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fleet_admin -d fleet"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    deploy: { resources: { limits: { memory: 768m } } }
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    ports: ["8123:8123"]
+    environment:
+      <<: *s3-env
+      CLICKHOUSE_DB: fleet
+      CLICKHOUSE_USER: fleet
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse_dev}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_COLD_ENDPOINT: http://objectstore:8333/clickhouse-cold/
+    ulimits: { nofile: { soft: 262144, hard: 262144 } }
+    depends_on: { objectstore-init: { condition: service_completed_successfully } }
+    volumes:
+      - ch-data:/var/lib/clickhouse
+      - ./infra/clickhouse/config.d/storage.xml:/etc/clickhouse-server/config.d/storage.xml:ro
+      - ./infra/clickhouse/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    deploy: { resources: { limits: { memory: 1536m } } }
+
+  redis:
+    image: redis:7.4-alpine
+    ports: ["6379:6379"]
+    # Live state is rebuildable from Kafka, so no persistence; evict nothing silently.
+    command: redis-server --maxmemory 400mb --maxmemory-policy noeviction --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy: { resources: { limits: { memory: 512m } } }
+
+  # S3-compatible object store (SeaweedFS). Stands in for AWS S3 / GCS / Azure Blob:
+  # services only speak the S3 API, so switching clouds is a config change.
+  objectstore:
+    image: chrislusf/seaweedfs:latest
+    ports: ["8333:8333"]
+    environment: *s3-env
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mkdir -p /etc/seaweedfs
+        cat > /etc/seaweedfs/s3.json <<EOF
+        {"identities":[{"name":"fleet","credentials":[{"accessKey":"$${S3_ACCESS_KEY}","secretKey":"$${S3_SECRET_KEY}"}],"actions":["Admin","Read","List","Tagging","Write"]}]}
+        EOF
+        exec weed server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json \
+             -master.volumeSizeLimitMB=512 -volume.max=0 -ip.bind=0.0.0.0
+    volumes: [object-data:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9333/cluster/status >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    deploy: { resources: { limits: { memory: 384m } } }
+
+  objectstore-init:
+    image: amazon/aws-cli:2.17.50
+    depends_on: { objectstore: { condition: service_healthy } }
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-fleets3}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-fleets3_dev_secret}
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for i in $$(seq 1 30); do aws --endpoint-url http://objectstore:8333 s3 ls >/dev/null 2>&1 && break; sleep 2; done
+        for b in clickhouse-cold telemetry-archive ml-artifacts; do
+          aws --endpoint-url http://objectstore:8333 s3 mb s3://$$b 2>/dev/null || true
+        done
+        aws --endpoint-url http://objectstore:8333 s3 ls
+    restart: "no"
+
+volumes:
+  kafka-data:
+  pg-data:
+  ch-data:
+  object-data:

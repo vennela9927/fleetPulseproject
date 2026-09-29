@@ -1,0 +1,23 @@
+{
+  "oem": "AURORA",
+  "version": 1,
+  "wmi": "AUR",
+  "fields": {
+    "vin":      { "path": "vin" },
+    "seq":      { "path": "seq" },
+    "ts":       { "path": "timestamp", "transform": "iso8601" },
+    "lat":      { "path": "location.lat" },
+    "lon":      { "path": "location.lng" },
+    "speedKmh": { "path": "speed.value", "transform": "number" },
+    "odoKm":    { "path": "odometer_km" },
+    "engineOn": { "path": "engine.on", "transform": "bool" },
+    "rpm":      { "path": "engine.rpm" },
+    "coolantC": { "path": "engine.coolant_c" },
+    "fuelPct":  { "path": "fuel_pct" },
+    "socPct":   { "path": "ev.soc_pct" },
+    "sohPct":   { "path": "ev.soh_pct" },
+    "battV":    { "path": "battery_12v" },
+    "dtc":      { "path": "dtcs", "transform": "list" },
+    "evt":      { "path": "event" }
+  }
+}

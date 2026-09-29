@@ -1,0 +1,24 @@
+{
+  "oem": "BOREALIS",
+  "version": 1,
+  "wmi": "BRL",
+  "fields": {
+    "vin":      { "path": "vehicle.id" },
+    "seq":      { "path": "msg_no" },
+    "ts":       { "path": "t", "transform": "epoch_ms" },
+    "lat":      { "path": "gps[0]" },
+    "lon":      { "path": "gps[1]" },
+    "speedKmh": { "path": "spd_mph", "transform": "mph_to_kmh" },
+    "odoKm":    { "path": "odo_mi", "transform": "miles_to_km" },
+    "engineOn": { "path": "ign", "transform": "bool" },
+    "rpm":      { "path": "rpm" },
+    "coolantC": { "path": "ect_f", "transform": "f_to_c" },
+    "fuelPct":  { "path": "fuel_frac", "transform": "fraction_to_pct" },
+    "socPct":   { "path": "hv_soc", "transform": "fraction_to_pct" },
+    "battV":    { "path": "v12" },
+    "dtc":      { "path": "faults", "transform": "csv_list" },
+    "evt":      { "path": "ev_code", "transform": "map",
+                  "map": { "HB": "HARSH_BRAKE", "HA": "HARSH_ACCEL", "IG1": "IGNITION_ON",
+                           "IG0": "IGNITION_OFF", "*": "PERIODIC" } }
+  }
+}
