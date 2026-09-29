@@ -49,8 +49,10 @@ const SUGGESTIONS = [
 /** Bold and bullet lists from the model's reply, as React elements: model output is never HTML. */
 function Rich({ text }: { text: string }) {
   const inline = (s: string): ReactNode[] =>
-    s.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
-      part.startsWith('**') && part.endsWith('**') ? <strong key={i}>{part.slice(2, -2)}</strong> : <Fragment key={i}>{part}</Fragment>)
+    s.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) =>
+      part.startsWith('**') && part.endsWith('**') ? <strong key={i}>{part.slice(2, -2)}</strong>
+        : part.length > 1 && part.startsWith('`') && part.endsWith('`') ? <code key={i} className="mono">{part.slice(1, -1)}</code>
+        : <Fragment key={i}>{part}</Fragment>)
   const blocks: ReactNode[] = []
   let bullets: string[] = []
   const flush = () => {

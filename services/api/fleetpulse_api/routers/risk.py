@@ -31,7 +31,7 @@ async def at_risk(
 ) -> dict[str, Any]:
     """The caller's vehicles by 7-day breakdown risk, highest first, from the latest scoring run."""
     after = decode_cursor(cursor, {"p": float, "id": int})
-    where = ["r.model_version = a.version", "r.scored_at = a.latest", "r.failure_prob_7d >= %s"]
+    where = ["(r.model_version, r.scored_at) = (SELECT version, latest FROM a)", "r.failure_prob_7d >= %s"]
     params: list[Any] = [min_probability]
     if after:
         where.append("(r.failure_prob_7d, -r.vehicle_id) < (%s, %s)")
@@ -39,14 +39,12 @@ async def at_risk(
     params.append(limit + 1)
     async with tenant_tx(request.app.state.pg, user) as conn:
         rows = await (await conn.execute(f"""
-            WITH a AS (
-                SELECT m.version, max(s.scored_at) AS latest
-                FROM risk_model m JOIN risk_score s ON s.model_version = m.version
-                WHERE m.is_active GROUP BY m.version)
+            WITH a AS (   -- scalars, so risk_score_ranked serves rows already in rank order
+                SELECT version, (SELECT max(scored_at) FROM risk_score WHERE model_version = m.version) AS latest
+                FROM risk_model m WHERE is_active)
             SELECT r.vehicle_id, trim(v.vin) AS vin, f.name AS fleet_name, o.name AS oem, vm.name AS model,
                    r.failure_prob_7d, r.predicted_component, r.est_cost_avoided_usd, r.top_factors, r.scored_at
             FROM risk_score r
-            CROSS JOIN a
             JOIN vehicle v ON v.id = r.vehicle_id
             JOIN fleet f ON f.id = v.fleet_id
             JOIN vehicle_model vm ON vm.id = v.model_id

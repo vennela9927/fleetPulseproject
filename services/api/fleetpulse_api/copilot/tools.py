@@ -127,15 +127,15 @@ class Toolbox:
         limit = max(1, min(int(limit), 20))
         async with tenant_tx(self.request.app.state.pg, self.user) as conn:
             rows = await (await conn.execute("""
-                WITH a AS (SELECT m.version, max(s.scored_at) AS latest FROM risk_model m
-                           JOIN risk_score s ON s.model_version = m.version WHERE m.is_active GROUP BY m.version)
+                WITH a AS (SELECT version, (SELECT max(scored_at) FROM risk_score WHERE model_version = m.version)
+                           AS latest FROM risk_model m WHERE is_active)
                 SELECT r.vehicle_id, trim(v.vin) AS vin, o.name AS maker, vm.name AS model, f.name AS fleet,
                        round(r.failure_prob_7d::numeric, 3) AS probability, r.predicted_component AS likely_part,
                        r.est_cost_avoided_usd AS saved_if_serviced_usd, r.top_factors
-                FROM risk_score r CROSS JOIN a
+                FROM risk_score r
                 JOIN vehicle v ON v.id = r.vehicle_id JOIN fleet f ON f.id = v.fleet_id
                 JOIN vehicle_model vm ON vm.id = v.model_id JOIN oem o ON o.id = vm.oem_id
-                WHERE r.model_version = a.version AND r.scored_at = a.latest AND r.failure_prob_7d >= %s
+                WHERE (r.model_version, r.scored_at) = (SELECT version, latest FROM a) AND r.failure_prob_7d >= %s
                 ORDER BY r.failure_prob_7d DESC, r.est_cost_avoided_usd DESC NULLS LAST, r.vehicle_id
                 LIMIT %s""", (float(min_probability), limit))).fetchall()   # many tie at the 99% cap
         for r in rows:

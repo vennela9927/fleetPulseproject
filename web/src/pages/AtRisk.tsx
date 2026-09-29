@@ -39,7 +39,7 @@ interface AtRiskRow {
 }
 
 const pct = (x: number) => `${Math.round(x * 100)}%`
-const usd = (x: number) => `$${count(Math.round(x))}`
+const usd = (x: number) => `${x < 0 ? '−' : ''}$${count(Math.abs(Math.round(x)))}`
 
 function Compare({ label, rule, model, format }: {
   label: string; rule: number | null; model: number | null; format: (n: number) => string
@@ -104,6 +104,13 @@ export function AtRisk() {
           <div className="card">
             <div className="card-head"><h2>Alerts it raises</h2></div>
             <div className="card-body">
+              <div className="tile" style={{ padding: 0, marginBottom: 12 }}>
+                <div className="value num">{usd(m.model_alert_threshold.net_savings_usd_per_week_per_100k)}</div>
+                <div className="secondary" style={{ fontSize: 12.5 }}>
+                  net saving per week per 100K vehicles, inspecting only where the risk pays for it
+                  ({count(Math.round(m.model_alert_threshold.flagged_per_day))} a day, not {count(Math.round(m.baseline_rule.flagged_per_day))})
+                </div>
+              </div>
               <dl className="kv">
                 <dt>Alert when risk is at least</dt><dd>{pct(m.model_alert_threshold.threshold)}</dd>
                 <dt>Alerts that were real</dt><dd>{pct(m.model_alert_threshold.precision)}</dd>

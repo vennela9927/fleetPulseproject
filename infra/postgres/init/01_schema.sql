@@ -191,6 +191,8 @@ CREATE TABLE risk_score (
     top_factors     jsonb NOT NULL DEFAULT '[]',
     PRIMARY KEY (vehicle_id, scored_at)
 );
+-- "This tenant's latest run, riskiest first": an index scan that stops at the page size.
+CREATE INDEX risk_score_ranked ON risk_score(tenant_id, model_version, scored_at DESC, failure_prob_7d DESC, vehicle_id);
 
 -- Vector store: a fixed-length numeric "fault signature" per vehicle-window,
 -- labelled with what actually happened. Used for "vehicles that looked like this
