@@ -78,6 +78,7 @@ services:
       CLICKHOUSE_DB: fleet
       CLICKHOUSE_USER: fleet
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse_dev}
+      CLICKHOUSE_API_PASSWORD: ${CLICKHOUSE_API_PASSWORD:-clickhouse_api_dev}   # read by init/02_api_access.sh
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
       CLICKHOUSE_COLD_ENDPOINT: http://objectstore:8333/clickhouse-cold/
     ulimits: { nofile: { soft: 262144, hard: 262144 } }
@@ -104,6 +105,28 @@ services:
       timeout: 3s
       retries: 20
     deploy: { resources: { limits: { memory: 512m } } }
+
+  # ---------------------------------------------------------------- identity
+  # OIDC provider. The realm (tenants as groups, demo users, clients) is imported on start.
+  # KC_HOSTNAME pins the token issuer to the browser-facing URL, so tokens verify the same
+  # whether the API reaches Keycloak as localhost:8080 or keycloak:8080.
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0.6
+    command: ["start-dev", "--import-realm"]
+    ports: ["8080:8080"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-keycloak_admin_dev}
+      KC_HOSTNAME: http://localhost:8080
+      KC_HEALTH_ENABLED: "true"
+      JAVA_OPTS_KC_HEAP: -Xms128m -Xmx384m
+    volumes: [./infra/keycloak/fleetpulse-realm.json:/opt/keycloak/data/import/fleetpulse-realm.json:ro]
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    deploy: { resources: { limits: { memory: 768m } } }
 
   # S3-compatible object store (SeaweedFS). Stands in for AWS S3 / GCS / Azure Blob:
   # services only speak the S3 API, so switching clouds is a config change.

@@ -30,8 +30,10 @@ import java.util.concurrent.TimeUnit;
  * Keeps each vehicle's latest state in Redis for the live map and vehicle page:
  * <ul>
  *   <li>{@code v:{vin}}: a hash of the latest reading, plus owner and derived status;</li>
- *   <li>{@code geo:{tenant}}: a GEO index per tenant, so the map asks for "vehicles in this
- *       viewport" and the tenant boundary is part of the key, not a filter.</li>
+ *   <li>{@code geo:{tenant}}: a GEO index per tenant for radius and viewport queries; the tenant
+ *       boundary is part of the key, not a filter;</li>
+ *   <li>{@code map:{tenant}}: the live map's read model, VIN → "lat,lon,status,speed,ts", so the
+ *       whole fleet is one HGETALL instead of one lookup per vehicle.</li>
  * </ul>
  * At-least-once: offsets auto-commit only for records whose writes completed. Replays and
  * out-of-order events are harmless because the Lua script applies an event only if it is
@@ -42,12 +44,13 @@ public final class LiveStateSink implements Runnable, AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(LiveStateSink.class);
 
-    /** KEYS: hash, geo set. ARGV: ts, lon, lat, vin, then field/value pairs. */
+    /** KEYS: hash, geo set, map hash. ARGV: ts, lon, lat, vin, map entry, then field/value pairs. */
     static final String UPSERT_IF_NEWER = """
             local cur = tonumber(redis.call('HGET', KEYS[1], 'ts') or '0')
             if tonumber(ARGV[1]) <= cur then return 0 end
-            redis.call('HSET', KEYS[1], 'ts', ARGV[1], unpack(ARGV, 5))
+            redis.call('HSET', KEYS[1], 'ts', ARGV[1], unpack(ARGV, 6))
             redis.call('GEOADD', KEYS[2], ARGV[2], ARGV[3], ARGV[4])
+            redis.call('HSET', KEYS[3], ARGV[4], ARGV[5])
             return 1
             """;
 
@@ -85,6 +88,7 @@ public final class LiveStateSink implements Runnable, AutoCloseable {
             while (running) {
                 ConsumerRecords<String, byte[]> records = consumer.poll(Duration.ofMillis(200));
                 if (records.isEmpty()) continue;
+                long started = System.nanoTime();
                 List<RedisFuture<?>> pending = new ArrayList<>(records.count());
                 for (ConsumerRecord<String, byte[]> r : records) {
                     CanonicalEvent e;
@@ -100,11 +104,18 @@ public final class LiveStateSink implements Runnable, AutoCloseable {
                     }
                     pending.add(cmd.evalsha(scriptSha, ScriptOutputType.INTEGER, keys(e, v), args(e, v)));
                 }
+                long prepared = System.nanoTime();
                 conn.flushCommands();
                 if (!LettuceFutures.awaitAll(30, TimeUnit.SECONDS, pending.toArray(new RedisFuture[0]))) {
                     throw new IllegalStateException("Redis writes did not complete in 30 s");
                 }
                 metrics.counter("live_state_updates_total").increment(pending.size());
+                long totalMs = (System.nanoTime() - started) / 1_000_000;
+                if (totalMs > 5_000) {
+                    // A healthy batch takes well under a second; say where a slow one spent its time.
+                    log.warn("slow live-state batch: {} records in {} ms (prepare {} ms, Redis {} ms)", records.count(),
+                            totalMs, (prepared - started) / 1_000_000, (System.nanoTime() - prepared) / 1_000_000);
+                }
             }
         } catch (WakeupException e) {
             if (running) throw e;
@@ -118,13 +129,15 @@ public final class LiveStateSink implements Runnable, AutoCloseable {
     }
 
     static String[] keys(CanonicalEvent e, VehicleDirectory.Vehicle v) {
-        return new String[]{"v:" + e.vin(), "geo:" + v.tenantId()};
+        return new String[]{"v:" + e.vin(), "geo:" + v.tenantId(), "map:" + v.tenantId()};
     }
 
     static String[] args(CanonicalEvent e, VehicleDirectory.Vehicle v) {
         String status = !e.engineOn() ? "OFF" : e.speedKmh() >= 1 ? "DRIVING" : "IDLING";
+        String ts = Long.toString(e.ts().toEpochMilli());
+        String mapEntry = e.lat() + "," + e.lon() + "," + status + "," + e.speedKmh() + "," + ts;
         return new String[]{
-                Long.toString(e.ts().toEpochMilli()), Double.toString(e.lon()), Double.toString(e.lat()), e.vin(),
+                ts, Double.toString(e.lon()), Double.toString(e.lat()), e.vin(), mapEntry,
                 "tenant", v.tenantId(),
                 "fleet", Long.toString(v.fleetId()),
                 "vehicle_id", Long.toString(v.id()),

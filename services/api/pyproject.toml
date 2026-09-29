@@ -1,0 +1,46 @@
+[project]
+name = "fleetpulse-api"
+version = "1.0.0"
+description = "FleetPulse API: tenant-isolated access to fleets, live state, telemetry and alerts."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.30",
+    "pydantic-settings>=2.4",
+    "psycopg[binary,pool]>=3.2",
+    "redis[hiredis]>=5.0",
+    "httpx>=0.27",
+    "pyjwt[crypto]>=2.9",
+    "prometheus-client>=0.20",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+markers = ["integration: needs the docker compose stack (Postgres, Redis, ClickHouse, Keycloak)"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "S", "UP", "ASYNC"]
+ignore = ["S101"]   # assert is how pytest checks
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106"]   # demo passwords in tests
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["fleetpulse_api"]
