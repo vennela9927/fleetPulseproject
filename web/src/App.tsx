@@ -2,8 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { lazy, Suspense } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
 import { api, type Me } from './api'
-import { logout } from './auth'
-import { IconBell, IconFlask, IconLogout, IconOverview, IconTruck } from './components/icons'
+import { hasRole, logout } from './auth'
+import { IconBell, IconFlask, IconLogout, IconOverview, IconPlug, IconTruck } from './components/icons'
 
 // Each page is its own chunk: the map (MapLibre) and charts (Recharts) load only where used.
 const Overview = lazy(() => import('./pages/Overview').then((m) => ({ default: m.Overview })))
@@ -12,23 +12,30 @@ const Vehicles = lazy(() => import('./pages/Vehicles').then((m) => ({ default: m
 const VehicleByVin = lazy(() => import('./pages/Vehicles').then((m) => ({ default: m.VehicleByVin })))
 const VehicleDetail = lazy(() => import('./pages/VehicleDetail').then((m) => ({ default: m.VehicleDetail })))
 const Chaos = lazy(() => import('./pages/Chaos').then((m) => ({ default: m.Chaos })))
+const Makers = lazy(() => import('./pages/Makers').then((m) => ({ default: m.Makers })))
 
 export function App() {
   const me = useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/v1/me'), staleTime: Infinity })
+  // Platform operators have no fleet of their own: they only see vehicle-maker onboarding.
+  const fleetUser = hasRole('fleet_manager') || hasRole('fleet_viewer')
+  const roleLabel = hasRole('fleet_manager') ? 'manager' : fleetUser ? 'viewer' : 'platform admin'
 
   return (
     <div className="shell">
       <aside className="sidebar">
         <div className="brand"><img src="/favicon.svg" alt="" />FleetPulse</div>
         <nav className="nav" aria-label="Main">
-          <NavLink to="/" end><IconOverview />Overview</NavLink>
-          <NavLink to="/alerts"><IconBell />Alerts</NavLink>
-          <NavLink to="/vehicles"><IconTruck />Vehicles</NavLink>
-          <NavLink to="/chaos"><IconFlask />Chaos</NavLink>
+          {fleetUser && <>
+            <NavLink to="/" end><IconOverview />Overview</NavLink>
+            <NavLink to="/alerts"><IconBell />Alerts</NavLink>
+            <NavLink to="/vehicles"><IconTruck />Vehicles</NavLink>
+            <NavLink to="/chaos"><IconFlask />Chaos</NavLink>
+          </>}
+          <NavLink to="/makers" end={!fleetUser}><IconPlug />Vehicle makers</NavLink>
         </nav>
         <div className="sidebar-foot">
           <div className="tenant">{me.data?.tenant_name ?? ' '}</div>
-          <div className="muted">{me.data ? `${me.data.username} · ${me.data.roles.includes('fleet_manager') ? 'manager' : 'viewer'}` : ' '}</div>
+          <div className="muted">{me.data ? `${me.data.username} · ${roleLabel}` : ' '}</div>
           <button className="btn small" style={{ marginTop: 8, display: 'inline-flex', gap: 6, alignItems: 'center' }} onClick={logout}>
             <IconLogout style={{ width: 13, height: 13 }} />Sign out
           </button>
@@ -37,7 +44,8 @@ export function App() {
       <main className="main">
         <Suspense fallback={<div className="empty">Loading…</div>}>
         <Routes>
-          <Route path="/" element={<Overview />} />
+          <Route path="/" element={fleetUser ? <Overview /> : <Makers />} />
+          <Route path="/makers" element={<Makers />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/vehicles" element={<Vehicles />} />
           <Route path="/vehicles/by-vin/:vin" element={<VehicleByVin />} />

@@ -20,7 +20,7 @@ from jwt import PyJWK
 from .config import Settings, get_settings
 from .errors import ApiError
 
-ROLES = frozenset({"fleet_manager", "fleet_viewer"})
+ROLES = frozenset({"fleet_manager", "fleet_viewer", "platform_admin"})
 
 
 @dataclass(frozen=True)
@@ -137,6 +137,15 @@ async def require_manager(user: CurrentUser) -> Principal:
 
 
 Manager = Annotated[Principal, Depends(require_manager)]
+
+
+async def require_platform_admin(user: CurrentUser) -> Principal:
+    if "platform_admin" not in user.roles:
+        raise ApiError(403, "Forbidden", "this action needs the platform_admin role")
+    return user
+
+
+PlatformAdmin = Annotated[Principal, Depends(require_platform_admin)]
 
 
 def build_verifier(settings: Settings | None = None) -> TokenVerifier:

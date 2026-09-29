@@ -29,6 +29,7 @@ curl -s -X POST http://localhost:8080/realms/fleetpulse/protocol/openid-connect/
 | acme.manager | acme-demo-2026 | Acme Logistics | fleet_manager |
 | acme.viewer | acme-view-2026 | Acme Logistics | fleet_viewer |
 | zenith.manager | zenith-demo-2026 | Zenith Rentals | fleet_manager |
+| ops.admin | ops-demo-2026 | FleetPulse Operations (no vehicles) | platform_admin |
 
 The dashboard uses the `fleetpulse-web` client (authorization code + PKCE). The password
 grant on `fleetpulse-cli` exists for scripts and tests only.
@@ -48,6 +49,12 @@ grant on `fleetpulse-cli` exists for scripts and tests only.
 | POST | /v1/alerts/{id}/acknowledge, /resolve | fleet_manager only; audited |
 | GET | /v1/alerts/stream | Server-Sent Events of new alerts for the caller's tenant |
 | GET | /v1/audit/verify | recomputes the audit log hash chain (fleet_manager) |
+| GET | /v1/ops/pipeline | events sent by the simulator vs. stored, for the caller's tenant |
+| POST | /v1/ops/inject, /burst, /pause | demo controls (fleet_manager, audited; off when `API_DEMO_CONTROLS=false`) |
+| GET | /v1/oem-mappings, /v1/oem-mappings/{id}, /v1/oem-mappings/status | maker mappings, what the pipeline runs, replay progress |
+| POST | /v1/oem-mappings | propose a maker's mapping as a DRAFT (platform_admin) |
+| POST | /v1/oem-mappings/{id}/preview | compile it and map the maker's parked events (platform_admin) |
+| POST | /v1/oem-mappings/{id}/approve | activate: DB change and Kafka publish succeed or fail together (platform_admin) |
 
 Errors are `application/problem+json` and carry the request id (`X-Request-ID`).
 Rate limit: a per-user token bucket (default 20/s, burst 60) shared across replicas through

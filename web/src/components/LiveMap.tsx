@@ -28,12 +28,15 @@ function basemap(dark: boolean): string {
 
 interface Props {
   data: LiveMapData | undefined
+  /** True while the first positions are loading; false once loaded or failed. */
+  loading?: boolean
+  failed?: boolean
   /** Called with the VIN of a clicked vehicle. */
   onOpen: (vin: string) => void
 }
 
 /** The tenant's vehicles on a WebGL map (50K points render smoothly), coloured by live status. */
-export function LiveMap({ data, onOpen }: Props) {
+export function LiveMap({ data, loading, failed, onOpen }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const map = useRef<MapLibreMap | null>(null)
   const fitted = useRef(false)
@@ -64,8 +67,11 @@ export function LiveMap({ data, onOpen }: Props) {
     m.addControl(new NavigationControl({ showCompass: false }), 'top-right')
     m.on('load', () => {
       m.addSource('vehicles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
-      // Draw vehicles under the basemap's labels so city and road names stay readable.
-      const firstLabel = m.getStyle().layers.find((l) => l.type === 'symbol')?.id
+      // Draw vehicles above every fill and line (roads, buildings, water) but under the labels,
+      // so city and road names stay readable: insert before the first label that follows them.
+      const layers = m.getStyle().layers
+      const lastShape = layers.reduce((last, l, i) => (l.type === 'symbol' ? last : i), -1)
+      const firstLabel = layers.slice(lastShape + 1).find((l) => l.type === 'symbol')?.id
       m.addLayer({
         id: 'vehicles',
         type: 'circle',
@@ -155,7 +161,19 @@ export function LiveMap({ data, onOpen }: Props) {
           ))}
         </div>
       </div>
-      <div className="map" ref={container} role="region" aria-label="Map of live vehicle positions" />
+      <div style={{ position: 'relative' }}>
+        <div className="map" ref={container} role="region" aria-label="Map of live vehicle positions" />
+        {(loading || (failed && !data)) && (
+          <div className="card" role="status" style={{ position: 'absolute', top: 12, left: 12, padding: '6px 12px', fontSize: 12.5 }}>
+            {failed ? 'Vehicle positions are unavailable right now. Retrying…' : 'Loading vehicle positions…'}
+          </div>
+        )}
+        {data && !data.rows.length && (
+          <div className="card" role="status" style={{ position: 'absolute', top: 12, left: 12, padding: '6px 12px', fontSize: 12.5 }}>
+            No vehicles are reporting.
+          </div>
+        )}
+      </div>
     </div>
   )
 }

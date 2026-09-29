@@ -14,6 +14,8 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Clock;
@@ -32,6 +34,7 @@ public class NormalizerApplication implements CommandLineRunner {
     private final int threads;
     private final int replication;
     private final String stateDir;
+    private final MappingPreview preview;
     private MappingRegistry registry;
     private DlqReplayer replayer;
     private KafkaStreams streams;
@@ -46,6 +49,7 @@ public class NormalizerApplication implements CommandLineRunner {
         this.threads = threads;
         this.replication = replication;
         this.stateDir = stateDir;
+        this.preview = new MappingPreview(bootstrap, Clock.systemUTC());
     }
 
     public static void main(String[] args) {
@@ -92,6 +96,15 @@ public class NormalizerApplication implements CommandLineRunner {
         return Map.of("state", streams == null ? "STARTING" : streams.state().name(),
                 "mappings", registry == null ? Map.of() : registry.versions(),
                 "replays", replayer == null ? Map.of() : replayer.progress());
+    }
+
+    /**
+     * Dry-runs a proposed mapping against the OEM's parked (unmapped) events. Internal only:
+     * the API calls it for a platform admin reviewing an onboarding request.
+     */
+    @PostMapping(path = "/mappings/preview", consumes = "application/json")
+    public Map<String, Object> previewMapping(@RequestBody String specJson) {
+        return preview.run(specJson);
     }
 
     @PreDestroy

@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     demo_controls: bool = True
     simulator_url: str = "http://127.0.0.1:8090"
 
+    # Onboarding: approved mappings are published to Kafka; the normalizer previews drafts.
+    kafka_bootstrap: str = "127.0.0.1:9094"
+    normalizer_url: str = "http://127.0.0.1:8082"
+
     # Token bucket per user: sustained requests per second and burst size.
     rate_limit_per_second: float = 20
     rate_limit_burst: int = 60

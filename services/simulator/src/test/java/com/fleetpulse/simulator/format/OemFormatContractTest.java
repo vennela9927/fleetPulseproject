@@ -12,6 +12,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 
@@ -26,6 +28,11 @@ import static org.assertj.core.api.Assertions.within;
 class OemFormatContractTest {
 
     static EventMapper mapper(String resource) throws Exception {
+        // Draco is not built in: its mapping is the partner file uploaded during onboarding.
+        if (resource.equals("draco")) {
+            return EventMapper.compile(Json.MAPPER.readValue(
+                    Files.readString(Path.of("../../infra/onboarding/draco-mapping.json")), MappingSpec.class));
+        }
         try (InputStream in = OemFormatContractTest.class.getResourceAsStream("/mappings/" + resource + ".json")) {
             return EventMapper.compile(Json.MAPPER.readValue(in, MappingSpec.class));
         }
@@ -35,7 +42,7 @@ class OemFormatContractTest {
     @ValueSource(ints = {1, 2, 3, 4, 5, 6, 7, 8})
     void everyModelRoundTripsThroughItsMapping(int modelId) throws Exception {
         Catalog.Model m = Catalog.byId(modelId);
-        EventMapper mapper = mapper(m.oem().equals("DRACO") ? "draco-test" : m.oem().toLowerCase());
+        EventMapper mapper = mapper(m.oem().toLowerCase());
         String vin = Vin.generate(m.wmi(), m.vds(), 2024, 'A', modelId * 1000);
         Instant t = Instant.parse("2026-09-29T08:00:00Z");
         VehicleSim v = new VehicleSim(vin, m, 12.97, 77.59, t, 1_000);

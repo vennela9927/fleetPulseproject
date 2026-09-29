@@ -56,7 +56,8 @@ export function Overview() {
       </div>
       {summary.isError && <div className="card error-box" style={{ marginBottom: 16 }}>Live data is unavailable right now. Retrying…</div>}
       <div className="grid-2">
-        <LiveMap data={live.data} onOpen={(vin) => navigate(`/vehicles/by-vin/${vin}`)} />
+        <LiveMap data={live.data} loading={live.isLoading} failed={live.isError}
+                 onOpen={(vin) => navigate(`/vehicles/by-vin/${vin}`)} />
         <AlertFeed />
       </div>
     </>

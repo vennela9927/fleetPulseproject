@@ -12,3 +12,4 @@ export const IconCritical = (p: P) => <svg {...base} {...p}><path d="M8 1.8 14.5
 export const IconWarning = (p: P) => <svg {...base} {...p}><circle cx="8" cy="8" r="6.3" fill="currentColor" stroke="none" /><path d="M8 4.8v3.7M8 10.9v.1" stroke="#0b0b0b" /></svg>
 export const IconInfo = (p: P) => <svg {...base} {...p}><circle cx="8" cy="8" r="6.3" /><path d="M8 7.5v3.7M8 5v.1" /></svg>
 export const IconLogout = (p: P) => <svg {...base} {...p}><path d="M6 14H3V2h3M10.5 11 14 8l-3.5-3M14 8H6" /></svg>
+export const IconPlug = (p: P) => <svg {...base} {...p}><path d="M6 1.8v3M10 1.8v3M4.5 4.8h7v2.7a3.5 3.5 0 0 1-7 0V4.8ZM8 11v3.2" /></svg>

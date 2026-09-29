@@ -127,13 +127,20 @@ public class Seeder {
     /** Vehicles for the live run and backfill, with their home depot and tenant. */
     public record FleetVehicle(long id, String vin, int modelId, long fleetId, String tenantId, double lat, double lon) {}
 
+    /**
+     * The first {@code limit} vehicles of an evenly spaced sample, so a smaller run still has
+     * every maker (ids are grouped by model) and every tenant, in proportion.
+     */
     public List<FleetVehicle> loadFleet(int limit) {
         return jdbc.query("""
-                        SELECT v.id, v.vin, v.model_id, v.fleet_id, v.tenant_id::text, d.lat, d.lon
-                        FROM vehicle v JOIN fleet f ON f.id = v.fleet_id JOIN depot d ON d.id = f.home_depot_id
-                        ORDER BY v.id LIMIT ?""",
+                        SELECT id, vin, model_id, fleet_id, tenant_id, lat, lon FROM (
+                            SELECT v.id, v.vin, v.model_id, v.fleet_id, v.tenant_id::text AS tenant_id, d.lat, d.lon,
+                                   row_number() OVER (ORDER BY v.id) AS rn, count(*) OVER () AS total
+                            FROM vehicle v JOIN fleet f ON f.id = v.fleet_id JOIN depot d ON d.id = f.home_depot_id) x
+                        WHERE (rn - 1) % greatest(1, total / ?) = 0
+                        ORDER BY id LIMIT ?""",
                 (rs, i) -> new FleetVehicle(rs.getLong(1), rs.getString(2), rs.getInt(3), rs.getLong(4),
                         rs.getString(5), rs.getDouble(6), rs.getDouble(7)),
-                limit);
+                limit, limit);
     }
 }

@@ -24,7 +24,7 @@ export async function accessToken(): Promise<string> {
   return keycloak.token as string
 }
 
-export function hasRole(role: 'fleet_manager' | 'fleet_viewer'): boolean {
+export function hasRole(role: 'fleet_manager' | 'fleet_viewer' | 'platform_admin'): boolean {
   return keycloak.hasRealmRole(role)
 }
 

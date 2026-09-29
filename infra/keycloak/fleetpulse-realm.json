@@ -11,18 +11,44 @@
   "passwordPolicy": "length(10)",
   "roles": {
     "realm": [
-      { "name": "fleet_manager", "description": "Sees the tenant's fleet and approves actions such as service bookings" },
-      { "name": "fleet_viewer", "description": "Read-only access to the tenant's fleet" }
+      {
+        "name": "fleet_manager",
+        "description": "Sees the tenant's fleet and approves actions such as service bookings"
+      },
+      {
+        "name": "fleet_viewer",
+        "description": "Read-only access to the tenant's fleet"
+      },
+      {
+        "name": "platform_admin",
+        "description": "FleetPulse operations: onboards vehicle makers (mapping approval). Sees no customer fleet data."
+      }
     ]
   },
   "groups": [
     {
       "name": "Acme Logistics",
-      "attributes": { "tenant_id": ["11111111-1111-1111-1111-111111111111"] }
+      "attributes": {
+        "tenant_id": [
+          "11111111-1111-1111-1111-111111111111"
+        ]
+      }
     },
     {
       "name": "Zenith Rentals",
-      "attributes": { "tenant_id": ["22222222-2222-2222-2222-222222222222"] }
+      "attributes": {
+        "tenant_id": [
+          "22222222-2222-2222-2222-222222222222"
+        ]
+      }
+    },
+    {
+      "name": "FleetPulse Operations",
+      "attributes": {
+        "tenant_id": [
+          "33333333-3333-3333-3333-333333333333"
+        ]
+      }
     }
   ],
   "users": [
@@ -34,9 +60,19 @@
       "firstName": "Asha",
       "lastName": "Manager",
       "enabled": true,
-      "credentials": [{ "type": "password", "value": "acme-demo-2026", "temporary": false }],
-      "realmRoles": ["fleet_manager"],
-      "groups": ["/Acme Logistics"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "acme-demo-2026",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "fleet_manager"
+      ],
+      "groups": [
+        "/Acme Logistics"
+      ]
     },
     {
       "id": "0a000000-0000-4000-8000-000000000002",
@@ -46,9 +82,19 @@
       "firstName": "Arjun",
       "lastName": "Viewer",
       "enabled": true,
-      "credentials": [{ "type": "password", "value": "acme-view-2026", "temporary": false }],
-      "realmRoles": ["fleet_viewer"],
-      "groups": ["/Acme Logistics"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "acme-view-2026",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "fleet_viewer"
+      ],
+      "groups": [
+        "/Acme Logistics"
+      ]
     },
     {
       "id": "0a000000-0000-4000-8000-000000000003",
@@ -58,9 +104,41 @@
       "firstName": "Zara",
       "lastName": "Manager",
       "enabled": true,
-      "credentials": [{ "type": "password", "value": "zenith-demo-2026", "temporary": false }],
-      "realmRoles": ["fleet_manager"],
-      "groups": ["/Zenith Rentals"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "zenith-demo-2026",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "fleet_manager"
+      ],
+      "groups": [
+        "/Zenith Rentals"
+      ]
+    },
+    {
+      "id": "0a000000-0000-4000-8000-000000000004",
+      "username": "ops.admin",
+      "email": "ops@fleetpulse.example.com",
+      "emailVerified": true,
+      "firstName": "Omar",
+      "lastName": "Operations",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ops-demo-2026",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "platform_admin"
+      ],
+      "groups": [
+        "/FleetPulse Operations"
+      ]
     }
   ],
   "clients": [
@@ -72,25 +150,41 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "implicitFlowEnabled": false,
-      "redirectUris": ["http://localhost:5173/*"],
-      "webOrigins": ["http://localhost:5173"],
-      "attributes": { "pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "http://localhost:5173/*" },
+      "redirectUris": [
+        "http://localhost:5173/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5173"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:5173/*"
+      },
       "protocolMappers": [
         {
           "name": "tenant_id",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-usermodel-attribute-mapper",
           "config": {
-            "user.attribute": "tenant_id", "claim.name": "tenant_id", "jsonType.label": "String",
-            "aggregate.attrs": "true", "multivalued": "false",
-            "access.token.claim": "true", "id.token.claim": "true", "userinfo.token.claim": "true"
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "aggregate.attrs": "true",
+            "multivalued": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
           }
         },
         {
           "name": "api-audience",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
-          "config": { "included.custom.audience": "fleetpulse-api", "access.token.claim": "true", "id.token.claim": "false" }
+          "config": {
+            "included.custom.audience": "fleetpulse-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
         }
       ]
     },
@@ -107,16 +201,25 @@
           "protocol": "openid-connect",
           "protocolMapper": "oidc-usermodel-attribute-mapper",
           "config": {
-            "user.attribute": "tenant_id", "claim.name": "tenant_id", "jsonType.label": "String",
-            "aggregate.attrs": "true", "multivalued": "false",
-            "access.token.claim": "true", "id.token.claim": "true", "userinfo.token.claim": "true"
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "aggregate.attrs": "true",
+            "multivalued": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
           }
         },
         {
           "name": "api-audience",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
-          "config": { "included.custom.audience": "fleetpulse-api", "access.token.claim": "true", "id.token.claim": "false" }
+          "config": {
+            "included.custom.audience": "fleetpulse-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
         }
       ]
     }
