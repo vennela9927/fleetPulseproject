@@ -20,5 +20,7 @@ describe('format', () => {
     expect(ruleLabel('SOMETHING_NEW')).toBe('something new')
     expect(alertDetail('ENGINE_OVERHEAT', { coolant_c: 122.3, above_for_seconds: 40 })).toBe('Coolant 122.3 °C for 40 s')
     expect(alertDetail('HARSH_DRIVING', { events: 5, window_seconds: 360 })).toBe('5 events in 6 min')
+    expect(alertDetail('HIGH_FAILURE_RISK', { probability: 0.81, component: 'Cooling system', est_cost_avoided_usd: 1080 }))
+      .toBe('81% risk of a cooling system failure within 7 days · about $1,080 saved if serviced')
   })
 })

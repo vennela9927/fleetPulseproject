@@ -51,6 +51,11 @@ export function alertDetail(rule: string, d: Record<string, unknown>): string {
     case 'HARSH_DRIVING': return `${n('events')} events in ${Math.round((n('window_seconds') ?? 0) / 60)} min`
     case 'EV_LOW_SOC': return `${n('soc_pct')}% charge while driving`
     case 'EXCESSIVE_IDLING': return `Idling ${Math.round((n('idle_seconds') ?? 0) / 60)} min`
+    case 'HIGH_FAILURE_RISK': {
+      const saved = n('est_cost_avoided_usd')
+      return `${Math.round((n('probability') ?? 0) * 100)}% risk of a ${String(d.component ?? 'component').toLowerCase()} failure within 7 days`
+        + (saved ? ` · about $${count(Math.round(saved))} saved if serviced` : '')
+    }
     default: return ''
   }
 }

@@ -24,6 +24,7 @@ GRANT DELETE ON driver_assignment TO fleet_app;
 GRANT INSERT ON audit_log TO fleet_app, fleet_service;
 
 GRANT INSERT, UPDATE ON alert, risk_score, fault_signature, risk_model, trip, maintenance_event, oem_mapping TO fleet_service;
+GRANT DELETE ON fault_signature TO fleet_service;   -- similarity signatures are rebuilt by every scoring run
 GRANT INSERT, UPDATE ON vehicle, fleet, depot, driver, driver_assignment, tenant,
                         subscription, app_user TO fleet_service;   -- seeding only
 

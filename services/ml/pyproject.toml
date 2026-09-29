@@ -1,0 +1,38 @@
+[project]
+name = "fleetpulse-ml"
+version = "1.0.0"
+description = "FleetPulse failure prediction: 7-day breakdown risk, likely component and cost avoided."
+requires-python = ">=3.12"
+dependencies = [
+    "lightgbm>=4.5",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "scikit-learn>=1.5",
+    "clickhouse-connect>=0.8",
+    "psycopg[binary]>=3.2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3", "ruff>=0.6"]
+
+[project.scripts]
+fleetpulse-train = "fleetpulse_ml.train:main"
+fleetpulse-score = "fleetpulse_ml.score:main"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "S", "UP", "NPY", "PD"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["fleetpulse_ml"]

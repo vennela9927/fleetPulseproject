@@ -30,6 +30,7 @@ public record SimProperties(
         int backfillDays,
         int backfillSampleMinutes,
         int backfillThreads,
+        boolean backfillResume,
         String clickhouseUrl,
         String clickhouseUser,
         String clickhousePassword) {

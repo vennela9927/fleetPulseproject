@@ -29,6 +29,7 @@ sim:
   backfill-days: ${SIM_BACKFILL_DAYS:21}
   backfill-sample-minutes: ${SIM_BACKFILL_SAMPLE_MINUTES:30}
   backfill-threads: ${SIM_BACKFILL_THREADS:4}
+  backfill-resume: ${SIM_BACKFILL_RESUME:false}
   clickhouse-url: ${CLICKHOUSE_URL:http://localhost:8123}
   clickhouse-user: fleet
   clickhouse-password: ${CLICKHOUSE_PASSWORD:clickhouse_dev}

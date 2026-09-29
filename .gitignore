@@ -33,8 +33,7 @@ htmlcov/
 # Generated data
 data/
 *.parquet
-models/*.bin
-models/*.txt
+services/ml/models/
 
 # Terraform
 .terraform/

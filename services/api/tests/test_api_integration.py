@@ -210,3 +210,26 @@ async def test_telemetry_window_is_bounded(client, tokens):
                             params={"resolution": "raw", "start": start.isoformat(), "end": end.isoformat()},
                             headers=bearer(tokens["acme"]))
     assert resp.status_code == 422
+
+
+# --------------------------------------------------------------------------- risk
+
+async def test_risk_list_is_sorted_paged_and_tenant_scoped(client, tokens):
+    model = await client.get("/v1/risk/model", headers=bearer(tokens["acme"]))
+    if model.status_code == 404:
+        pytest.skip("no failure model trained yet")
+    first = (await client.get("/v1/risk?limit=20", headers=bearer(tokens["acme"]))).json()
+    nxt = first["next_cursor"]
+    second = (await client.get(f"/v1/risk?limit=20&cursor={nxt}", headers=bearer(tokens["acme"]))).json()
+    items = first["items"] + second["items"]
+    probs = [r["failure_prob_7d"] for r in items]
+    assert probs == sorted(probs, reverse=True)
+    assert len({r["vehicle_id"] for r in items}) == len(items) == 40
+
+    # Every scored vehicle shown to Acme is Acme's: Zenith cannot open it.
+    top = items[0]["vehicle_id"]
+    assert (await client.get(f"/v1/vehicles/{top}", headers=bearer(tokens["acme"]))).status_code == 200
+    assert (await client.get(f"/v1/vehicles/{top}", headers=bearer(tokens["zenith"]))).status_code == 404
+    zenith = (await client.get("/v1/risk?limit=100", headers=bearer(tokens["zenith"]))).json()["items"]
+    zenith_ids = {r["vehicle_id"] for r in zenith}
+    assert not zenith_ids & {r["vehicle_id"] for r in items}

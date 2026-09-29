@@ -66,9 +66,15 @@ public final class Backfiller {
 
     public void run(List<FleetVehicle> fleet) throws Exception {
         Long existing = chCount();
-        if (existing != null && existing > 0) {
-            log.info("backfill: ClickHouse already holds {} rows, skipping", existing);
+        if (existing != null && existing > 0 && !props.backfillResume()) {
+            log.info("backfill: ClickHouse already holds {} rows, skipping (set SIM_BACKFILL_RESUME=true to "
+                    + "complete an interrupted backfill)", existing);
             return;
+        }
+        if (existing != null && existing > 0) {
+            // Batches and their dedup tokens are deterministic, so ClickHouse drops every batch the
+            // interrupted run already inserted and stores only the missing ones.
+            log.info("backfill: resuming over {} existing rows", existing);
         }
         Instant anchor = LocalDate.now(ZoneOffset.UTC).atStartOfDay().toInstant(ZoneOffset.UTC);
         Instant start = anchor.minus(Duration.ofDays(props.backfillDays()));
@@ -203,11 +209,18 @@ public final class Backfiller {
                 .POST(HttpRequest.BodyPublishers.ofByteArray(gzippedRows))
                 .build();
         for (int attempt = 1; ; attempt++) {
-            HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() == 200) return;
-            if (attempt >= 5) throw new IllegalStateException("ClickHouse insert failed: " + resp.body());
-            log.warn("ClickHouse insert attempt {} failed ({}), retrying: {}", attempt, resp.statusCode(),
-                    resp.body().lines().findFirst().orElse(""));
+            String problem;
+            try {
+                HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+                if (resp.statusCode() == 200) return;
+                problem = resp.statusCode() + ": " + resp.body().lines().findFirst().orElse("");
+            } catch (IOException e) {
+                // Timeouts and dropped connections too: the server may even have applied the insert,
+                // which is why the retry carries the same deduplication token.
+                problem = e.toString();
+            }
+            if (attempt >= 5) throw new IllegalStateException("ClickHouse insert failed: " + problem);
+            log.warn("ClickHouse insert attempt {} failed, retrying: {}", attempt, problem);
             Thread.sleep(2_000L * attempt);
         }
     }
@@ -228,6 +241,12 @@ public final class Backfiller {
 
     /** Breakdowns and the repair a day later, for every scheduled fault that fell in the past. */
     private void writeMaintenanceEvents(List<FleetVehicle> fleet, Instant start, Instant anchor) {
+        Integer existing = postgres.queryForObject(
+                "SELECT count(*) FROM maintenance_event WHERE occurred_at >= ?", Integer.class, Timestamp.from(start));
+        if (existing != null && existing > 0) {
+            log.info("backfill: {} maintenance events already present for this window, not writing them again", existing);
+            return;
+        }
         List<Object[]> batch = new ArrayList<>();
         for (FleetVehicle fv : fleet) {
             FaultPlan p = FaultPlan.forVehicle(fv.vin(), Catalog.byId(fv.modelId()).powertrain(), anchor);
