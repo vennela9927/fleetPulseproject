@@ -123,13 +123,22 @@ public class SimulatorApplication implements CommandLineRunner {
             return ResponseEntity.ok(Map.of("factor", factor, "seconds", seconds));
         }
 
+        @PostMapping("/pause")
+        ResponseEntity<?> pause(@RequestParam boolean paused) {
+            LiveRunner r = app.runner();
+            if (r == null) return ResponseEntity.status(503).build();
+            r.pause(paused);
+            return ResponseEntity.ok(Map.of("paused", paused));
+        }
+
         @PostMapping("/inject")
         ResponseEntity<?> inject(@RequestParam FaultPlan.Component component,
                                  @RequestParam(defaultValue = "10") int count,
-                                 @RequestParam(defaultValue = "5") int minutes) {
+                                 @RequestParam(defaultValue = "5") int minutes,
+                                 @RequestParam(required = false) String tenant) {
             LiveRunner r = app.runner();
             if (r == null) return ResponseEntity.status(503).build();
-            List<String> vins = r.inject(component, Math.min(count, 500), Duration.ofMinutes(minutes));
+            List<String> vins = r.inject(component, Math.min(count, 500), Duration.ofMinutes(minutes), tenant);
             return ResponseEntity.ok(Map.of("component", component, "vins", vins));
         }
     }

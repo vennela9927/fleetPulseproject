@@ -48,9 +48,16 @@ public final class LiveRunner implements Runnable {
     private final SimProperties props;
     private final Sink sink;
     private final VehicleSim[] fleet;
+    /** Owner tenant of each vehicle in {@link #fleet}, by index. */
+    private final String[] tenants;
     private final SplittableRandom chaos = new SplittableRandom(42);
     private final PriorityQueue<Delayed> delayed = new PriorityQueue<>((a, b) -> Long.compare(a.releaseAtMs, b.releaseAtMs));
     private final Map<String, AtomicLong> ledger = new ConcurrentHashMap<>();
+    /** The same ledger split by tenant, so a tenant can reconcile its own events against storage. */
+    private final Map<String, Map<String, AtomicLong>> ledgerByTenant = new ConcurrentHashMap<>();
+    private final Instant startedAt;
+    private final long firstSeq;
+    private volatile boolean paused;
     private final Counter duplicates, invalid, outOfOrder, events;
     private final AtomicLong tickLagMs = new AtomicLong();
     private volatile int burstFactor = 1;
@@ -62,10 +69,13 @@ public final class LiveRunner implements Runnable {
         this.sink = sink;
         Instant now = Instant.now();
         Instant anchor = LocalDate.now(ZoneOffset.UTC).atStartOfDay().toInstant(ZoneOffset.UTC);
-        long firstSeq = now.getEpochSecond();   // monotonic across simulator restarts
+        this.startedAt = now;
+        this.firstSeq = now.getEpochSecond();   // monotonic across simulator restarts
         this.fleet = new VehicleSim[vehicles.size()];
+        this.tenants = new String[vehicles.size()];
         for (int i = 0; i < vehicles.size(); i++) {
             FleetVehicle fv = vehicles.get(i);
+            tenants[i] = fv.tenantId();
             Catalog.Model m = Catalog.byId(fv.modelId());
             VehicleSim v = new VehicleSim(fv.vin(), m, fv.lat(), fv.lon(), now, firstSeq);
             v.schedule(FaultPlan.forVehicle(fv.vin(), m.powertrain(), anchor));
@@ -96,9 +106,11 @@ public final class LiveRunner implements Runnable {
                 double dt = (double) props.intervalSeconds() / k;
                 Map<String, List<ObjectNode>> batches = new HashMap<>();
                 Instant now = Instant.now();
-                for (int f = 0; f < k; f++) {
+                // While paused nothing new is generated, but late (out-of-order) events are still
+                // released, so the sent and stored counts converge to an exact match.
+                for (int f = 0; f < k && !paused; f++) {
                     int slot = (int) ((tick * k + f) % slots);
-                    for (int i = slot; i < fleet.length; i += slots) emit(fleet[i], now, dt, batches);
+                    for (int i = slot; i < fleet.length; i += slots) emit(fleet[i], tenants[i], now, dt, batches);
                 }
                 releaseDelayed(batches);
                 for (var e : batches.entrySet()) flush(e.getKey(), e.getValue());
@@ -117,11 +129,14 @@ public final class LiveRunner implements Runnable {
         }
     }
 
-    private void emit(VehicleSim v, Instant now, double dt, Map<String, List<ObjectNode>> batches) throws InterruptedException {
+    private void emit(VehicleSim v, String tenant, Instant now, double dt, Map<String, List<ObjectNode>> batches)
+            throws InterruptedException {
         VehicleSim.Sample s = v.step(now, dt);
         ObjectNode payload = OemFormatter.format(s);
         String oem = s.oem();
         ledger.get(oem).incrementAndGet();
+        ledgerByTenant.computeIfAbsent(tenant, t -> new ConcurrentHashMap<>())
+                .computeIfAbsent(oem, o -> new AtomicLong()).incrementAndGet();
         events.increment();
 
         if (chaos.nextDouble() < props.outOfOrderRate()) {
@@ -180,13 +195,23 @@ public final class LiveRunner implements Runnable {
         log.warn("live: burst x{} for {}", burstFactor, duration);
     }
 
-    /** Injects a fast-developing fault into {@code count} compatible vehicles; returns their VINs. */
-    public List<String> inject(FaultPlan.Component component, int count, Duration over) {
+    public void pause(boolean on) {
+        paused = on;
+        log.warn("live: {}", on ? "paused" : "resumed");
+    }
+
+    /**
+     * Injects a fast-developing fault into {@code count} compatible vehicles, optionally only
+     * among one tenant's vehicles; returns their VINs.
+     */
+    public List<String> inject(FaultPlan.Component component, int count, Duration over, String tenant) {
         List<String> vins = new ArrayList<>();
         SplittableRandom r = new SplittableRandom();
         Instant now = Instant.now();
         for (int attempts = 0; vins.size() < count && attempts < count * 50; attempts++) {
-            VehicleSim v = fleet[r.nextInt(fleet.length)];
+            int i = r.nextInt(fleet.length);
+            VehicleSim v = fleet[i];
+            if (tenant != null && !tenant.equals(tenants[i])) continue;
             if (v.model.oem().equals("DRACO") || !component.appliesTo(v.model.powertrain())) continue;
             v.inject(component, now, over);
             vins.add(v.vin);
@@ -204,6 +229,16 @@ public final class LiveRunner implements Runnable {
         Map<String, Long> l = new LinkedHashMap<>();
         ledger.forEach((k, v) -> l.put(k, v.get()));
         m.put("ledgerValidUnique", l);
+        Map<String, Map<String, Long>> byTenant = new LinkedHashMap<>();
+        ledgerByTenant.forEach((t, oems) -> {
+            Map<String, Long> o = new LinkedHashMap<>();
+            oems.forEach((k, v) -> o.put(k, v.get()));
+            byTenant.put(t, o);
+        });
+        m.put("ledgerByTenant", byTenant);
+        m.put("startedAt", startedAt.toString());
+        m.put("firstSeq", firstSeq);
+        m.put("paused", paused);
         m.put("duplicatesSent", (long) duplicates.count());
         m.put("invalidSent", (long) invalid.count());
         m.put("outOfOrderSent", (long) outOfOrder.count());

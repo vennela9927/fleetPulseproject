@@ -66,4 +66,41 @@ class FaultPlanTest {
         assertThat(maxFailing).isGreaterThan(maxHealthy + 5);
         assertThat(codes).isPositive();
     }
+
+    /** Longest run of consecutive 10 s samples above 110 C during a 3-minute cooling fault, in seconds. */
+    static int longestOverheatSeconds(VehicleSim v, Instant start, boolean demo) {
+        FaultPlan p = new FaultPlan(FaultPlan.Component.COOLING, start, start.plus(Duration.ofMinutes(3)), 1.0);
+        if (demo) v.inject(p.component(), start, Duration.ofMinutes(3));
+        else v.schedule(p);
+        int run = 0, best = 0;
+        for (Instant t = start.plusSeconds(10); !t.isAfter(start.plus(Duration.ofMinutes(3))); t = t.plusSeconds(10)) {
+            VehicleSim.Sample s = v.step(t, 10);
+            run = s.coolantC() != null && s.coolantC() > 110 ? run + 10 : 0;
+            best = Math.max(best, run);
+        }
+        return best;
+    }
+
+    @Test
+    void aDemoCoolingFaultOverheatsLongEnoughToAlertButANaturalOneDoesNot() {
+        Catalog.Model m = Catalog.byId(1);
+        int demoAlerting = 0, naturalAlerting = 0;
+        for (int i = 0; i < 40; i++) {
+            String vin = Vin.generate(m.wmi(), m.vds(), 2024, 'A', 1000 + i);
+            // Warm the engines up for an hour first, as on the road.
+            Instant t = ANCHOR;
+            VehicleSim demo = new VehicleSim(vin, m, 12.97, 77.59, t, 0);
+            VehicleSim natural = new VehicleSim(vin, m, 12.97, 77.59, t, 0);
+            for (int k = 0; k < 360; k++) {
+                t = t.plusSeconds(10);
+                demo.step(t, 10);
+                natural.step(t, 10);
+            }
+            if (longestOverheatSeconds(demo, t, true) >= 30) demoAlerting++;
+            if (longestOverheatSeconds(natural, t, false) >= 30) naturalAlerting++;
+        }
+        // Parked vehicles cannot overheat, so not all 40; most running ones do.
+        assertThat(demoAlerting).isGreaterThanOrEqualTo(10);
+        assertThat(naturalAlerting).isZero();
+    }
 }

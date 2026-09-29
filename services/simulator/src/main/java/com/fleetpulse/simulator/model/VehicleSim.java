@@ -106,7 +106,7 @@ public final class VehicleSim {
                 if (soc >= 95) modeUntil = now;
             }
         }
-        updateThermalsAndElectrics(dt, fc, s);
+        updateThermalsAndElectrics(dt, fc, s, active == injected);
         List<String> dtc = faultCodes(dt, fc, s);
         seq++;
 
@@ -181,10 +181,21 @@ public final class VehicleSim {
         return evt;
     }
 
-    private void updateThermalsAndElectrics(double dt, FaultPlan.Component fc, double s) {
+    private void updateThermalsAndElectrics(double dt, FaultPlan.Component fc, double s, boolean demoFault) {
         double target = engineOn() ? 90 + (speed > 60 ? 4 : 0) : 32;
-        if (fc == FaultPlan.Component.COOLING && engineOn()) target += 14 * s + (rnd.nextDouble() < 0.1 * s ? 20 * s : 0);
-        coolant += (target - coolant) * Math.min(1, dt / 300);
+        double settleSeconds = 300;
+        if (fc == FaultPlan.Component.COOLING && engineOn()) {
+            target += 14 * s + (rnd.nextDouble() < 0.1 * s ? 20 * s : 0);
+            // A demo fault runs on a compressed timeline all the way to failure: in its second half
+            // the cooling system gives out and the engine overheats quickly, as with a failed water
+            // pump. Natural faults keep only the slow drift, so live data matches the history the
+            // failure model is trained on.
+            if (demoFault && s > 0.5) {
+                target = Math.min(125, target + 60 * (s - 0.5) / 0.5);
+                settleSeconds = 30;
+            }
+        }
+        coolant += (target - coolant) * Math.min(1, dt / settleSeconds);
         if (noisySensors) coolant += (rnd.nextDouble() - 0.5) * 4;
 
         double vTarget = engineOn() ? 14.1 : 12.6;

@@ -28,6 +28,11 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    # Demo controls (fault injection, traffic bursts, pause) proxy the simulator's internal
+    # admin API. Off in any real deployment: there is no simulator there.
+    demo_controls: bool = True
+    simulator_url: str = "http://127.0.0.1:8090"
+
     # Token bucket per user: sustained requests per second and burst size.
     rate_limit_per_second: float = 20
     rate_limit_burst: int = 60
