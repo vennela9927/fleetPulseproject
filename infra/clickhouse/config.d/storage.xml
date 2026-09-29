@@ -27,6 +27,15 @@
     </storage_configuration>
 
     <!-- Keep memory bounded on a 16 GB development laptop. -->
-    <max_server_memory_usage_to_ram_ratio>0.8</max_server_memory_usage_to_ram_ratio>
+    <max_server_memory_usage_to_ram_ratio>0.85</max_server_memory_usage_to_ram_ratio>
+    <!-- A small merge pool bounds merge memory. ClickHouse refuses to start unless these
+         thresholds fit within background_pool_size * background_merges_mutations_concurrency_ratio
+         (4 * 2 = 8 slots); the defaults (8, 20, 25) assume the default pool of 16. -->
+    <background_pool_size>4</background_pool_size>
+    <merge_tree>
+        <number_of_free_entries_in_pool_to_lower_max_size_of_merge>4</number_of_free_entries_in_pool_to_lower_max_size_of_merge>
+        <number_of_free_entries_in_pool_to_execute_mutation>2</number_of_free_entries_in_pool_to_execute_mutation>
+        <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>4</number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
+    </merge_tree>
     <mark_cache_size>268435456</mark_cache_size>
 </clickhouse>

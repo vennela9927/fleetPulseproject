@@ -107,32 +107,6 @@ services:
 
   # S3-compatible object store (SeaweedFS). Stands in for AWS S3 / GCS / Azure Blob:
   # services only speak the S3 API, so switching clouds is a config change.
-objectstore-init: { condition: service_completed_successfully } }
-    volumes:
-      - ch-data:/var/lib/clickhouse
-      - ./infra/clickhouse/config.d/storage.xml:/etc/clickhouse-server/config.d/storage.xml:ro
-      - ./infra/clickhouse/init:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-    deploy: { resources: { limits: { memory: 1536m } } }
-
-  redis:
-    image: redis:7.4-alpine
-    ports: ["6379:6379"]
-    # Live state is rebuildable from Kafka, so no persistence; evict nothing silently.
-    command: redis-server --maxmemory 400mb --maxmemory-policy noeviction --save "" --appendonly no
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-    deploy: { resources: { limits: { memory: 512m } } }
-
-  # S3-compatible object store (SeaweedFS). Stands in for AWS S3 / GCS / Azure Blob:
-  # services only speak the S3 API, so switching clouds is a config change.
   objectstore:
     image: chrislusf/seaweedfs:latest
     ports: ["8333:8333"]
@@ -152,7 +126,7 @@ objectstore-init: { condition: service_completed_successfully } }
       interval: 5s
       timeout: 5s
       retries: 30
-    deploy: { resources: { limits: { memory: 384m } } }
+    deploy: { resources: { limits: { memory: 768m } } }
 
   objectstore-init:
     image: amazon/aws-cli:2.17.50

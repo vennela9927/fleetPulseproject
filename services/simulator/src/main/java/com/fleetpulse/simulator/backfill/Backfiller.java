@@ -48,7 +48,9 @@ public final class Backfiller {
 
     private static final Logger log = LoggerFactory.getLogger(Backfiller.class);
     private static final DateTimeFormatter CH_TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").withZone(ZoneOffset.UTC);
-    private static final int ROWS_PER_INSERT = 200_000;
+    // Each row costs ~1.4 KB of ClickHouse memory while it is parsed and pushed through the
+    // rollup views; 150K rows keeps two concurrent inserts well inside the 1.5 GB container.
+    private static final int ROWS_PER_INSERT = 150_000;
     // Vehicles operate 08:00-20:00 IST = 02:30-14:30 UTC.
     private static final int OPEN_MINUTE_UTC = 150, CLOSE_MINUTE_UTC = 870;
 
@@ -92,28 +94,44 @@ public final class Backfiller {
         writeMaintenanceEvents(eligible, start, anchor);
     }
 
+    /**
+     * Day-major order: every insert holds rows for a single day, so it lands in a single
+     * ClickHouse partition as one large part. Vehicle-major order would scatter each insert
+     * across all daily partitions and create many small parts that must then be merged.
+     */
     private void generate(List<FleetVehicle> fleet, int shard, int shards, Instant start, Instant anchor) throws Exception {
         long stepSeconds = props.backfillSampleMinutes() * 60L;
-        Chunk chunk = new Chunk();
+        List<FleetVehicle> mine = new ArrayList<>();
+        List<VehicleSim> sims = new ArrayList<>();
         for (int i = shard; i < fleet.size(); i += shards) {
             FleetVehicle fv = fleet.get(i);
             Catalog.Model m = Catalog.byId(fv.modelId());
             VehicleSim v = new VehicleSim(fv.vin(), m, fv.lat(), fv.lon(), start, start.getEpochSecond());
             v.schedule(FaultPlan.forVehicle(fv.vin(), m.powertrain(), anchor));
-            for (Instant t = start; t.isBefore(anchor); t = t.plusSeconds(stepSeconds)) {
-                int minuteOfDay = (int) ((t.getEpochSecond() % 86_400) / 60);
-                if (minuteOfDay < OPEN_MINUTE_UTC || minuteOfDay >= CLOSE_MINUTE_UTC) continue;
-                chunk.write(fv, m, v.step(t, stepSeconds));
+            mine.add(fv);
+            sims.add(v);
+        }
+        for (Instant day = start; day.isBefore(anchor); day = day.plus(Duration.ofDays(1))) {
+            Instant open = day.plusSeconds(OPEN_MINUTE_UTC * 60L), close = day.plusSeconds(CLOSE_MINUTE_UTC * 60L);
+            String tokenPrefix = "backfill-" + day.getEpochSecond() + "-" + shard + "-";
+            int chunkNo = 0;
+            Chunk chunk = new Chunk();
+            for (int i = 0; i < sims.size(); i++) {
+                FleetVehicle fv = mine.get(i);
+                Catalog.Model m = Catalog.byId(fv.modelId());
+                for (Instant t = open; t.isBefore(close); t = t.plusSeconds(stepSeconds)) {
+                    chunk.write(fv, m, sims.get(i).step(t, stepSeconds));
+                }
                 if (chunk.count >= ROWS_PER_INSERT) {
-                    insert(chunk.finish());
+                    insert(chunk.finish(), tokenPrefix + chunkNo++);
                     rows.addAndGet(chunk.count);
                     chunk = new Chunk();
                 }
             }
-        }
-        if (chunk.count > 0) {
-            insert(chunk.finish());
-            rows.addAndGet(chunk.count);
+            if (chunk.count > 0) {
+                insert(chunk.finish(), tokenPrefix + chunkNo);
+                rows.addAndGet(chunk.count);
+            }
         }
     }
 
@@ -169,9 +187,16 @@ public final class Backfiller {
         }
     }
 
-    private void insert(byte[] gzippedRows) throws Exception {
+    /**
+     * Inserts one batch. A failed insert can leave the batch in the raw table but not in a
+     * rollup view (or the reverse), so a plain retry would double-count the rollups. The
+     * deterministic token makes the retry skip every table that already holds the batch.
+     */
+    private void insert(byte[] gzippedRows, String dedupToken) throws Exception {
         String query = URLEncoder.encode("INSERT INTO fleet.telemetry FORMAT JSONEachRow", StandardCharsets.UTF_8);
-        HttpRequest req = HttpRequest.newBuilder(URI.create(props.clickhouseUrl() + "/?query=" + query))
+        HttpRequest req = HttpRequest.newBuilder(URI.create(props.clickhouseUrl() + "/?query=" + query
+                        + "&insert_deduplicate=1&deduplicate_blocks_in_dependent_materialized_views=1"
+                        + "&insert_deduplication_token=" + URLEncoder.encode(dedupToken, StandardCharsets.UTF_8)))
                 .header("Content-Encoding", "gzip")
                 .header("Authorization", basicAuth())
                 .timeout(Duration.ofMinutes(5))
@@ -181,7 +206,8 @@ public final class Backfiller {
             HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() == 200) return;
             if (attempt >= 5) throw new IllegalStateException("ClickHouse insert failed: " + resp.body());
-            log.warn("ClickHouse insert attempt {} failed ({}), retrying", attempt, resp.statusCode());
+            log.warn("ClickHouse insert attempt {} failed ({}), retrying: {}", attempt, resp.statusCode(),
+                    resp.body().lines().findFirst().orElse(""));
             Thread.sleep(2_000L * attempt);
         }
     }
