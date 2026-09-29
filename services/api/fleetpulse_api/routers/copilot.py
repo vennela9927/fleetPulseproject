@@ -16,6 +16,7 @@ from ..copilot.tools import Toolbox, new_conversation_id
 from ..db import ensure_user, tenant_tx
 from ..errors import ApiError, not_found
 from ..ratelimit import RateLimited, rate_limit
+from .maintenance import PlanConflict, book_items
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/copilot", tags=["copilot"])
@@ -100,17 +101,32 @@ async def _decide(request: Request, user: Manager, action_id: int, approve: bool
                                "WHERE id = %s", (user.user_id, now, action_id))
             await audit.record(conn, request, user, "agent.reject", "agent_action", str(action_id))
             return {"id": action_id, "status": "REJECTED"}
-        if action["tool"] != "book_service":
-            raise ApiError(422, "Unsupported", f"no executor for {action['tool']}")
         args = action["arguments"]
-        # Created by the approving human's decision, inside RLS: a proposal can only book this
-        # tenant's vehicle into this tenant's depot.
-        booking = await (await conn.execute("""
-            INSERT INTO service_booking (tenant_id, vehicle_id, depot_id, scheduled_for, reason, created_by, source)
-            VALUES (%s, %s, %s, %s, %s, %s, 'AGENT') RETURNING id""",
-            (user.tenant_id, args["vehicle_id"], args["depot_id"], args["scheduled_for"], args["reason"],
-             user.user_id))).fetchone()
-        result = {"booking_id": booking["id"]}
+        if action["tool"] == "book_service":
+            # Created by the approving human's decision, inside RLS: a proposal can only book this
+            # tenant's vehicle into this tenant's depot.
+            booking = await (await conn.execute("""
+                INSERT INTO service_booking (tenant_id, vehicle_id, depot_id, scheduled_for, reason, created_by, source)
+                VALUES (%s, %s, %s, %s, %s, %s, 'AGENT') RETURNING id""",
+                (user.tenant_id, args["vehicle_id"], args["depot_id"], args["scheduled_for"], args["reason"],
+                 user.user_id))).fetchone()
+            result: dict[str, Any] = {"booking_id": booking["id"]}
+        elif action["tool"] == "book_service_plan":
+            # Every item is re-checked now (tenant, not already booked, a free bay): the plan may
+            # have been proposed hours ago. All or nothing, in a savepoint so the failure is recorded.
+            try:
+                async with conn.transaction():
+                    ids = await book_items(conn, user, args["items"], "AGENT")
+            except PlanConflict as e:
+                result = {"error": f"{e}; ask the copilot for a fresh plan"}
+                await conn.execute("UPDATE agent_action SET status = 'FAILED', decided_by = %s, decided_at = %s, "
+                                   "result = %s::jsonb WHERE id = %s",
+                                   (user.user_id, now, json.dumps(result), action_id))
+                await audit.record(conn, request, user, "agent.approve_failed", "agent_action", str(action_id), result)
+                return {"id": action_id, "status": "FAILED", **result}
+            result = {"bookings": len(ids), "booking_ids": ids}
+        else:
+            raise ApiError(422, "Unsupported", f"no executor for {action['tool']}")
         await conn.execute("UPDATE agent_action SET status = 'EXECUTED', decided_by = %s, decided_at = %s, "
                            "result = %s::jsonb WHERE id = %s", (user.user_id, now, json.dumps(result), action_id))
         await audit.record(conn, request, user, "agent.approve", "agent_action", str(action_id),

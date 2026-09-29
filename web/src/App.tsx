@@ -3,7 +3,7 @@ import { lazy, Suspense } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
 import { api, type Me } from './api'
 import { hasRole, logout } from './auth'
-import { IconBell, IconFlask, IconGauge, IconLogout, IconOverview, IconPlug, IconSpark, IconTruck } from './components/icons'
+import { IconBell, IconCalendar, IconFlask, IconGauge, IconLogout, IconOverview, IconPlug, IconSpark, IconTruck } from './components/icons'
 
 // Each page is its own chunk: the map (MapLibre) and charts (Recharts) load only where used.
 const Overview = lazy(() => import('./pages/Overview').then((m) => ({ default: m.Overview })))
@@ -15,6 +15,7 @@ const Chaos = lazy(() => import('./pages/Chaos').then((m) => ({ default: m.Chaos
 const Makers = lazy(() => import('./pages/Makers').then((m) => ({ default: m.Makers })))
 const AtRisk = lazy(() => import('./pages/AtRisk').then((m) => ({ default: m.AtRisk })))
 const Copilot = lazy(() => import('./pages/Copilot').then((m) => ({ default: m.Copilot })))
+const ServicePlan = lazy(() => import('./pages/ServicePlan').then((m) => ({ default: m.ServicePlan })))
 
 export function App() {
   const me = useQuery({ queryKey: ['me'], queryFn: () => api<Me>('/v1/me'), staleTime: Infinity })
@@ -31,6 +32,7 @@ export function App() {
             <NavLink to="/" end><IconOverview />Overview</NavLink>
             <NavLink to="/alerts"><IconBell />Alerts</NavLink>
             <NavLink to="/risk"><IconGauge />At risk</NavLink>
+            <NavLink to="/plan"><IconCalendar />Service plan</NavLink>
             <NavLink to="/copilot"><IconSpark />Copilot</NavLink>
             <NavLink to="/vehicles"><IconTruck />Vehicles</NavLink>
             <NavLink to="/chaos"><IconFlask />Chaos</NavLink>
@@ -51,6 +53,7 @@ export function App() {
           <Route path="/" element={fleetUser ? <Overview /> : <Makers />} />
           <Route path="/makers" element={<Makers />} />
           <Route path="/risk" element={<AtRisk />} />
+          <Route path="/plan" element={<ServicePlan />} />
           <Route path="/copilot" element={<Copilot />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/vehicles" element={<Vehicles />} />

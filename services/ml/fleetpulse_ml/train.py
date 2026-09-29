@@ -15,10 +15,9 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 import psycopg
-from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
-from . import data
+from . import data, evaluation
 from .features import CATEGORICAL, HORIZON_DAYS, LOOKBACK_DAYS, baseline_flags, feature_columns, features_asof, label
 
 INSPECTION_COST_USD = 150.0   # assumption: a technician's check of a flagged vehicle
@@ -74,30 +73,41 @@ def outcome(frame: pd.DataFrame, flagged: pd.Series, fleet_size: int) -> dict:
     }
 
 
-def main() -> None:
-    cfg = data.Config()
-    ds, asofs = build_dataset(cfg)
-    X = feature_columns(ds)
+def split(ds: pd.DataFrame, asofs: list[pd.Timestamp]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame,
+                                                                  pd.Timestamp]:
     cut = asofs[len(asofs) * 5 // 8]
     train = ds[(ds["group"] < 7) & (ds["asof"] < cut)]
     valid = ds[(ds["group"] == 7) & (ds["asof"] < cut)]
     test = ds[(ds["group"] >= 8) & (ds["asof"] >= cut)]
+    return train, valid, test, cut
+
+
+def average_saving(ds: pd.DataFrame) -> float:
+    caught = ds[ds["label"] == 1].drop_duplicates("vehicle_id")
+    return float((caught["breakdown_cost_usd"] - caught["repair_cost_usd"]).mean())
+
+
+def extra_metrics(train: pd.DataFrame, valid: pd.DataFrame, test: pd.DataFrame, X: list[str],
+                  p_test: np.ndarray, threshold: float) -> dict:
+    return {"cost_curve": evaluation.cost_curve(test, p_test),
+            "by_maker": evaluation.by_maker(test, p_test, threshold),
+            "unseen_maker": evaluation.unseen_maker(train, valid, test, X, p_test, threshold)}
+
+
+def main() -> None:
+    cfg = data.Config()
+    ds, asofs = build_dataset(cfg)
+    X = feature_columns(ds)
+    train, valid, test, cut = split(ds, asofs)
     print(f"examples: train {len(train):,} ({train['label'].mean():.2%} positive), valid {len(valid):,}, "
           f"test {len(test):,} ({test['label'].mean():.2%} positive); as-of days {asofs[0].date()}..{asofs[-1].date()}")
 
-    model = lgb.LGBMClassifier(n_estimators=3000, learning_rate=0.03, num_leaves=31, min_child_samples=50,
-                               subsample=0.8, subsample_freq=1, colsample_bytree=0.8, reg_lambda=1.0,
-                               verbose=-1, random_state=7)
-    model.fit(train[X], train["label"], eval_X=valid[X], eval_y=valid["label"], eval_metric="average_precision",
-              categorical_feature=CATEGORICAL, callbacks=[lgb.early_stopping(150, verbose=False)])
-    calib = IsotonicRegression(out_of_bounds="clip", y_min=0, y_max=1).fit(
-        model.predict_proba(valid[X])[:, 1], valid["label"])
+    model, calib = evaluation.fit_calibrated(train, valid, X)
     p_test = calib.predict(model.predict_proba(test[X])[:, 1])
 
     # Alert when servicing pays for itself on average: calibrated probability x average saving
     # per caught breakdown > the inspection cost. A decision rule, not a tuned number.
-    caught = ds[ds["label"] == 1].drop_duplicates("vehicle_id")
-    avg_saving = float((caught["breakdown_cost_usd"] - caught["repair_cost_usd"]).mean())
+    avg_saving = average_saving(ds)
     threshold = INSPECTION_COST_USD / avg_saving
 
     base = baseline_flags(test)
@@ -138,6 +148,7 @@ def main() -> None:
         "assumptions": {"inspection_cost_usd": INSPECTION_COST_USD,
                         "saving_per_caught_breakdown": "breakdown cost minus planned repair cost, per component, "
                                                        "from the maintenance history"},
+        **extra_metrics(train, valid, test, X, p_test, threshold),
     }
 
     version = f"lgbm-{datetime.now(UTC):%Y%m%d-%H%M}"

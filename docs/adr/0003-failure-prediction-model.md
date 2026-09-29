@@ -49,6 +49,38 @@ more than the breakdowns it prevents. At the same volume the model still catches
 breakdowns again. Its real advantage is that the calibrated probability lets the fleet inspect only
 where it pays.
 
+**The inspection cost is the fleet's decision.** The test set's cost curve (flagged, caught and saved
+per threshold) gives the net saving for any cost: $300 per inspection moves the threshold to 33%
+and the saving to $542K a week, against $543.5K for the best threshold chosen in hindsight. The
+cost rule stays within 1% of the best possible without being tuned on test data.
+
+**A maker the model has never seen.** Leaving each maker out of training and calibration in turn:
+
+| Maker | PR-AUC, trained with it | PR-AUC, never seen | Breakdowns caught, never seen | Alerts real, never seen |
+|---|---|---|---|---|
+| Aurora | 0.77 | 0.76 | 78% | 80% |
+| Borealis | 0.70 | 0.69 | 71% | 83% |
+| Cygnus | 0.77 | 0.77 | 80% | 82% |
+
+The drop is at most 0.011 PR-AUC. The features are defined on the canonical event, not on any
+maker's payload, so a newly onboarded maker (Draco in the demo) is scored from its first full day
+with close to the accuracy of the makers the model was trained on.
+
+## From scores to a workshop plan
+
+Two products read the scores (`/v1/maintenance`):
+
+- **Service plan.** Every vehicle with probability × cost avoided > inspection cost gets a bay:
+  vehicles at 80% or more first and only tomorrow (median warning is 2.7 days), then the rest by
+  expected saving, home depot first, then a depot within 350 km, earliest day. Urgent vehicles with no
+  bay tomorrow are reported as too risky to wait instead of being pushed back. Greedy by value is
+  simple to explain; an exact assignment could do slightly better when neighbouring depots are both
+  full. Booking re-checks every item (tenant, not already booked, a free bay) in one transaction
+  under a per-tenant lock, all or nothing. The copilot can propose the whole plan as one action.
+- **Parts forecast.** Calibrated probabilities add up to expected failures: per depot and part,
+  sum(p) with a 90% range from the variance sum(p(1-p)). Across Acme's fleet the forecast is 580
+  breakdowns a week, in line with the history.
+
 ## Alternatives considered
 
 - **Survival models (time to failure):** more natural for censored data, but the product needs

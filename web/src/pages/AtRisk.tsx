@@ -2,6 +2,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, ApiError, type Page } from '../api'
 import { count, dateTime, relTime } from '../format'
+import { useInspectionCost } from '../inspectionCost'
 
 interface Outcome {
   flagged_per_day: number
@@ -10,6 +11,17 @@ interface Outcome {
   median_days_warning: number | null
   net_savings_usd_per_week_per_100k: number
 }
+
+interface CurvePoint {
+  threshold: number
+  flagged: number
+  caught: number
+  saved_usd: number
+  precision: number | null
+  recall: number
+}
+
+interface MakerResult { pr_auc: number | null; precision: number | null; recall: number | null }
 
 interface ModelInfo {
   version: string
@@ -20,8 +32,10 @@ interface ModelInfo {
     model: { pr_auc: number; roc_auc: number }
     baseline_rule: Outcome
     model_same_budget: Outcome
-    model_alert_threshold: Outcome & { threshold: number }
+    model_alert_threshold: Outcome & { threshold: number; avg_saving_usd: number }
     component_accuracy: number
+    cost_curve?: CurvePoint[]
+    unseen_maker?: { maker: string; examples: number; trained_with: MakerResult; never_seen: MakerResult }[]
   }
 }
 
@@ -50,6 +64,102 @@ function Compare({ label, rule, model, format }: {
       <td className="num" style={{ textAlign: 'right' }}>{rule === null ? '–' : format(rule)}</td>
       <td className="num" style={{ textAlign: 'right' }}><strong>{model === null ? '–' : format(model)}</strong></td>
     </tr>
+  )
+}
+
+const title = (s: string) => s.charAt(0) + s.slice(1).toLowerCase()
+
+/** "What does an inspection cost you?" The alert rule is p x average saving > cost, so the cost sets
+ * the threshold; the stored test-set curve gives what that threshold would have caught and saved. */
+function CostCard({ m }: { m: ModelInfo['metrics'] }) {
+  const [cost, setCost] = useInspectionCost()
+  const curve = m.cost_curve ?? []
+  const avgSaving = m.model_alert_threshold.avg_saving_usd
+  const threshold = cost / avgSaving
+  // The highest curve threshold at or below the rule's: it flags the same vehicles unless some score
+  // falls in between, and calibrated scores are coarse steps, so it matches the model's real alerts.
+  const point = [...curve].reverse().find((c) => c.threshold <= threshold + 1e-9) ?? curve[0] ?? null
+  const net = (c: CurvePoint) => c.saved_usd - cost * c.flagged
+  const best = curve.reduce<CurvePoint | null>((b, c) => (!b || net(c) > net(b) ? c : b), null)
+
+  return (
+    <div className="card">
+      <div className="card-head"><h2>Alerts it raises</h2></div>
+      <div className="card-body">
+        {point ? (
+          <>
+            <label htmlFor="cost" className="secondary" style={{ fontSize: 13, display: 'block' }}>
+              What does one inspection cost you? <strong className="num" style={{ color: 'var(--text-primary)' }}>${cost}</strong>
+            </label>
+            <input id="cost" type="range" min={50} max={600} step={10} value={cost} style={{ width: '100%', margin: '6px 0 12px' }}
+                   onChange={(e) => setCost(Number(e.target.value))} aria-valuetext={`$${cost}`} />
+            <div className="tile" style={{ padding: 0, marginBottom: 12 }}>
+              <div className="value num">{usd(net(point))}</div>
+              <div className="secondary" style={{ fontSize: 12.5 }}>
+                net saving per week per 100K vehicles, alerting when risk is at least {pct(threshold)}
+                {best && net(best) - net(point) >= 500 &&
+                  <> (best possible in hindsight: {usd(net(best))} at {pct(best.threshold)})</>}
+              </div>
+            </div>
+            <dl className="kv">
+              <dt>Alerts per day, per 100K</dt><dd className="num">{count(Math.round(point.flagged))}</dd>
+              <dt>Alerts that were real</dt><dd>{point.precision === null ? '–' : pct(point.precision)}</dd>
+              <dt>Breakdowns alerted</dt><dd>{pct(point.recall)}</dd>
+              <dt>Likely part named correctly</dt><dd>{pct(m.component_accuracy)}</dd>
+              <dt>Ranking quality (PR-AUC)</dt><dd>{m.model.pr_auc.toFixed(2)} <span className="muted">vs {(m.split.test_positive_rate).toFixed(3)} by chance</span></dd>
+            </dl>
+            <p className="muted" style={{ fontSize: 12.5, marginBottom: 0 }}>
+              An inspection pays when risk × the breakdown it prevents (on average ${count(avgSaving)} of towing and
+              downtime over a planned repair) is more than it costs. The <Link to="/plan">service plan</Link> uses this cost.
+            </p>
+          </>
+        ) : (
+          <dl className="kv">
+            <dt>Alert when risk is at least</dt><dd>{pct(m.model_alert_threshold.threshold)}</dd>
+            <dt>Alerts that were real</dt><dd>{pct(m.model_alert_threshold.precision)}</dd>
+            <dt>Breakdowns alerted</dt><dd>{pct(m.model_alert_threshold.recall)}</dd>
+          </dl>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function MakersCard({ rows }: { rows: NonNullable<ModelInfo['metrics']['unseen_maker']> }) {
+  const f = (x: number | null) => (x === null ? '–' : x.toFixed(2))
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-head">
+        <h2>Does it work for a vehicle maker it has never seen?</h2>
+        <span className="muted" style={{ fontSize: 12.5 }}>each maker left out of training in turn</span>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Maker</th>
+              <th style={{ textAlign: 'right' }}>Ranking quality, trained with it</th><th style={{ textAlign: 'right' }}>never seen</th>
+              <th style={{ textAlign: 'right' }}>Breakdowns caught, trained with it</th><th style={{ textAlign: 'right' }}>never seen</th>
+              <th style={{ textAlign: 'right' }}>Alerts that were real, never seen</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.maker}>
+                <td>{title(r.maker)}</td>
+                <td className="num" style={{ textAlign: 'right' }}>{f(r.trained_with.pr_auc)}</td>
+                <td className="num" style={{ textAlign: 'right' }}><strong>{f(r.never_seen.pr_auc)}</strong></td>
+                <td className="num" style={{ textAlign: 'right' }}>{r.trained_with.recall === null ? '–' : pct(r.trained_with.recall)}</td>
+                <td className="num" style={{ textAlign: 'right' }}><strong>{r.never_seen.recall === null ? '–' : pct(r.never_seen.recall)}</strong></td>
+                <td className="num" style={{ textAlign: 'right' }}>{r.never_seen.precision === null ? '–' : pct(r.never_seen.precision)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="muted" style={{ fontSize: 12.5, margin: 0, padding: '10px 16px 14px' }}>
+        Every maker's data is converted to one standard format before the model sees it, so a maker onboarded today
+        (like Draco) is scored from its first full day of data, with close to the accuracy of makers it was trained on.
+      </p>
+    </div>
   )
 }
 
@@ -101,31 +211,10 @@ export function AtRisk() {
               </table>
             </div>
           </div>
-          <div className="card">
-            <div className="card-head"><h2>Alerts it raises</h2></div>
-            <div className="card-body">
-              <div className="tile" style={{ padding: 0, marginBottom: 12 }}>
-                <div className="value num">{usd(m.model_alert_threshold.net_savings_usd_per_week_per_100k)}</div>
-                <div className="secondary" style={{ fontSize: 12.5 }}>
-                  net saving per week per 100K vehicles, inspecting only where the risk pays for it
-                  ({count(Math.round(m.model_alert_threshold.flagged_per_day))} a day, not {count(Math.round(m.baseline_rule.flagged_per_day))})
-                </div>
-              </div>
-              <dl className="kv">
-                <dt>Alert when risk is at least</dt><dd>{pct(m.model_alert_threshold.threshold)}</dd>
-                <dt>Alerts that were real</dt><dd>{pct(m.model_alert_threshold.precision)}</dd>
-                <dt>Breakdowns alerted</dt><dd>{pct(m.model_alert_threshold.recall)}</dd>
-                <dt>Likely part named correctly</dt><dd>{pct(m.component_accuracy)}</dd>
-                <dt>Ranking quality (PR-AUC)</dt><dd>{m.model.pr_auc.toFixed(2)} <span className="muted">vs {(m.split.test_positive_rate).toFixed(3)} by chance</span></dd>
-              </dl>
-              <p className="muted" style={{ fontSize: 12.5, marginBottom: 0 }}>
-                Savings assume a $150 inspection per flagged vehicle and count, for each breakdown caught, the
-                difference between its breakdown cost (towing, downtime) and a planned repair.
-              </p>
-            </div>
-          </div>
+          <CostCard m={m} />
         </div>
       )}
+      {m?.unseen_maker && <MakersCard rows={m.unseen_maker} />}
 
       <div className="card">
         <div className="card-head"><h2>Vehicles most likely to break down in the next {m?.horizon_days ?? 7} days</h2>

@@ -20,7 +20,7 @@ from .config import Settings, get_settings
 from .db import create_pool
 from .errors import ApiError, api_error_handler, http_error_handler, validation_error_handler
 from .ratelimit import RateLimiter
-from .routers import alerts, copilot, live, me, onboarding, ops, risk, vehicles
+from .routers import alerts, copilot, live, maintenance, me, onboarding, ops, risk, vehicles
 
 log = logging.getLogger("fleetpulse.api")
 
@@ -85,7 +85,7 @@ def create_app(settings: Settings | None = None, verifier: TokenVerifier | None 
                        expose_headers=["X-Request-ID", "Retry-After", "X-RateLimit-Remaining"])
 
     for r in (me.router, vehicles.router, alerts.router, live.router, ops.router, onboarding.router, risk.router,
-              copilot.router):
+              maintenance.router, copilot.router):
         app.include_router(r)
 
     @app.get("/healthz", include_in_schema=False)

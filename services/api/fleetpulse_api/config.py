@@ -41,8 +41,9 @@ class Settings(BaseSettings):
 
     # Copilot. Without a key it falls back to a deterministic rule-based assistant.
     gemini_api_key: str = Field("", validation_alias=AliasChoices("GEMINI_API_KEY", "API_GEMINI_API_KEY"), repr=False)
-    # Tried in order: Flash models are sometimes overloaded (503), and a turn should not wait on one.
-    gemini_models: list[str] = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite"]
+    # Tried in order until one answers. Flash-Lite first: it answers in about a second and handles these
+    # tool calls well; the larger Flash models are often overloaded (503) and are kept as fallbacks.
+    gemini_models: list[str] = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.7-flash"]
 
     # Token bucket per user: sustained requests per second and burst size.
     rate_limit_per_second: float = 20

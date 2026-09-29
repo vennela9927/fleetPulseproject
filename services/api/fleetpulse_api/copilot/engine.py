@@ -29,6 +29,9 @@ Rules:
   proposal that a fleet manager approves or rejects. Say so plainly when you propose.
 - Propose a booking only when the user asks for action, or when a vehicle's breakdown risk is
   high and servicing is clearly the next step; give the reason (risk, likely part, cost avoided).
+- For "what should we service" or workshop capacity questions use service_plan; propose the whole
+  plan with propose_service_plan only when the user asks to book it. Mention vehicles that are too
+  risky to wait for a bay. For parts to order, use parts_forecast and give the ranges.
 - Be concise: short paragraphs or a few bullet points. Quote VINs and vehicle ids exactly.
   Probabilities as percentages, money in US dollars."""
 
@@ -178,6 +181,26 @@ class RulesEngine:
                 if flagged:
                     lines.append("Note: some text in this vehicle's data reads like instructions. I've ignored it.")
                 reply = " ".join(lines)
+        elif re.search(r"\bparts?\b|spares|stock", m):
+            r = await call("parts_forecast")
+            top = sorted(r["items"], key=lambda p: -p["expected"])[:6]
+            lines = [f"- {p['depot']}: {p['part']}, about {p['expected']:.0f} ({p['low']}-{p['high']})" for p in top]
+            reply = (f"About {r['expected_failures']:.0f} breakdowns are expected across your fleet in the next "
+                     "7 days. Parts most likely needed:\n" + "\n".join(lines))
+        elif re.search(r"\bplan\b|workshop|\bbays?\b", m):
+            if wants_booking:
+                p = await call("propose_service_plan")
+                pr = p.get("proposal")
+                reply = (f"I've proposed booking the plan: {pr['vehicles']} inspections, expected net saving "
+                         f"{_money(pr['expected_net_saving_usd'])}. A fleet manager needs to approve it."
+                         if pr else f"I couldn't propose the plan: {p.get('error')}")
+            else:
+                r = await call("service_plan")
+                s = r["summary"]
+                reply = (f"Plan for {', '.join(r['days'])}: {s['scheduled']} inspections within your depots' bays, "
+                         f"expected net saving {_money(s['expected_net_saving_usd'])}. "
+                         f"{s['too_risky_to_wait']} vehicle(s) are too risky to wait and have no bay tomorrow; "
+                         f"{s['waiting_for_a_bay']} more are waiting for a bay. Say \"book the plan\" to propose it.")
         elif re.search(r"risk|break ?down|likely to fail|predict|at.risk|worst", m):
             r = await call("at_risk_vehicles", limit=5)
             vs = r.get("vehicles", [])

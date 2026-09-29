@@ -8,7 +8,8 @@ rule a careful mechanic could apply without one.
 uv sync
 uv run python -m fleetpulse_ml.train   # builds features, trains, evaluates, registers the active model
 uv run python -m fleetpulse_ml.score   # scores every vehicle; writes risk_score, alerts, similarity signatures
-uv run pytest                          # feature, label and leakage tests
+uv run python -m fleetpulse_ml.evaluate  # adds the cost curve and per-maker results to the active model
+uv run pytest                          # feature, label, leakage and evaluation tests
 ```
 
 Settings: `CLICKHOUSE_HOST/PORT/USER/PASSWORD`, `POSTGRES_DSN` (the `fleet_service` role) and
@@ -55,6 +56,16 @@ flags **the same number of vehicles per day** as the rule, taking the highest-ri
 Money: each breakdown caught saves its breakdown cost minus the planned-repair cost, both
 averaged per component from the maintenance history. Each flagged vehicle costs an inspection
 (an assumption: $150).
+
+Beyond the headline numbers, training (and `evaluate`, for a model trained before them) stores:
+
+- **Cost curve:** for each probability threshold, vehicles flagged, breakdowns caught and money
+  saved per 100K vehicles. Any inspection cost then gives its net saving without retraining; the
+  dashboard's slider reads it.
+- **Per maker:** results for each maker's vehicles.
+- **Never-seen maker:** each maker is left out of training and calibration in turn and the model is
+  tested on it. This is the onboarding case: a new maker's vehicles arrive in the canonical format
+  and are scored by a model that has never seen that maker.
 
 ## Results
 

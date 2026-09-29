@@ -9,11 +9,17 @@ interface Proposal {
   action_id: number
   tool: string
   status: string
-  vehicle_id: number
-  vin: string
-  depot: string
-  scheduled_for: string
   reason: string
+  // book_service
+  vehicle_id?: number
+  vin?: string
+  depot?: string
+  scheduled_for?: string
+  // book_service_plan
+  vehicles?: number
+  days?: string[]
+  expected_net_saving_usd?: number
+  too_risky_to_wait?: number
 }
 
 interface ChatResponse {
@@ -28,7 +34,7 @@ interface ChatResponse {
 interface Action {
   id: number
   tool: string
-  arguments: Omit<Proposal, 'action_id' | 'tool' | 'status'>
+  arguments: Omit<Proposal, 'action_id' | 'tool' | 'status' | 'depot_id'> & { depot_id?: number }
   rationale: string | null
   status: 'PROPOSED' | 'EXECUTED' | 'REJECTED' | 'FAILED'
   created_at: string
@@ -42,8 +48,9 @@ type Message =
 
 const SUGGESTIONS = [
   'Which vehicles are most likely to break down this week?',
+  'What should our workshops do in the next 3 days?',
+  'Which parts should we order for next week?',
   'Summarise my fleet',
-  'Show the open critical alerts',
 ]
 
 /** Bold and bullet lists from the model's reply, as React elements: model output is never HTML. */
@@ -73,21 +80,38 @@ function ProposalCard({ p, onDecided }: { p: Proposal; onDecided: () => void }) 
   const manager = hasRole('fleet_manager')
   const [state, setState] = useState<string>(p.status)
   const [error, setError] = useState<string | null>(null)
+  const [outcome, setOutcome] = useState<string | null>(null)
+  const isPlan = p.tool === 'book_service_plan'
   const decide = useMutation({
     mutationFn: (approve: boolean) =>
-      api<{ status: string; booking_id?: number }>(`/v1/copilot/actions/${p.action_id}/${approve ? 'approve' : 'reject'}`, { method: 'POST' }),
-    onSuccess: (r) => { setState(r.status); onDecided() },
+      api<{ status: string; booking_id?: number; bookings?: number; error?: string }>(
+        `/v1/copilot/actions/${p.action_id}/${approve ? 'approve' : 'reject'}`, { method: 'POST' }),
+    onSuccess: (r) => {
+      setState(r.status)
+      setOutcome(r.error ?? (r.bookings ? `Booked ${r.bookings} inspections.` : null))
+      onDecided()
+    },
     onError: (e) => setError(e instanceof ApiError && e.status === 409 ? 'Already decided by someone else.' : e.message),
   })
   return (
     <div className="card" style={{ padding: 12, marginTop: 8, background: 'var(--surface-raised)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
-        <strong>Proposed: service booking</strong>
+        <strong>Proposed: {isPlan ? 'service plan' : 'service booking'}</strong>
         <span className="pill">{state === 'PROPOSED' ? 'awaiting approval' : state.toLowerCase()}</span>
       </div>
       <div className="secondary" style={{ fontSize: 13, margin: '4px 0 8px' }}>
-        <Link to={`/vehicles/${p.vehicle_id}`} className="mono">{p.vin}</Link> into {p.depot}, {dateTime(p.scheduled_for)}
-        <div>{p.reason}</div>
+        {isPlan ? (
+          <>
+            {p.vehicles} inspections, {p.days?.map((d) => d.slice(5)).join(', ')}, expected net saving ${(p.expected_net_saving_usd ?? 0).toLocaleString()}
+            {!!p.too_risky_to_wait && <div>{p.too_risky_to_wait} vehicles are too risky to wait and have no bay tomorrow.</div>}
+            <div><Link to="/plan">See the plan</Link></div>
+          </>
+        ) : (
+          <>
+            <Link to={`/vehicles/${p.vehicle_id}`} className="mono">{p.vin}</Link> into {p.depot}, {dateTime(p.scheduled_for!)}
+            <div>{p.reason}</div>
+          </>
+        )}
       </div>
       {state === 'PROPOSED' && (manager ? (
         <div style={{ display: 'flex', gap: 8 }}>
@@ -95,7 +119,8 @@ function ProposalCard({ p, onDecided }: { p: Proposal; onDecided: () => void }) 
           <button className="btn small" disabled={decide.isPending} onClick={() => decide.mutate(false)}>Reject</button>
         </div>
       ) : <div className="muted" style={{ fontSize: 12.5 }}>A fleet manager must approve this.</div>)}
-      {state === 'EXECUTED' && <div style={{ fontSize: 12.5, color: 'var(--success-text)' }}>Booked. The copilot proposed it; you approved it.</div>}
+      {state === 'EXECUTED' && <div style={{ fontSize: 12.5, color: 'var(--success-text)' }}>{outcome ?? 'Booked.'} The copilot proposed it; you approved it.</div>}
+      {state === 'FAILED' && <div style={{ fontSize: 12.5 }}>Not booked: {outcome}</div>}
       {error && <div style={{ fontSize: 12.5 }}>{error}</div>}
     </div>
   )
@@ -199,11 +224,21 @@ export function Copilot() {
             <ul className="feed">
               {pending.data.items.map((a) => (
                 <li key={a.id}>
-                  <strong>Service booking</strong>
-                  <div className="secondary" style={{ fontSize: 12.5 }}>
-                    <Link to={`/vehicles/${a.arguments.vehicle_id}`} className="mono">{a.arguments.vin}</Link> · {a.arguments.depot}
-                  </div>
-                  <div className="muted" style={{ fontSize: 12 }}>{a.arguments.reason} · {relTime(a.created_at)}</div>
+                  {a.tool === 'book_service_plan' ? (
+                    <>
+                      <strong>Service plan</strong>
+                      <div className="secondary" style={{ fontSize: 12.5 }}>{a.rationale}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>{relTime(a.created_at)}</div>
+                    </>
+                  ) : (
+                    <>
+                      <strong>Service booking</strong>
+                      <div className="secondary" style={{ fontSize: 12.5 }}>
+                        <Link to={`/vehicles/${a.arguments.vehicle_id}`} className="mono">{a.arguments.vin}</Link> · {a.arguments.depot}
+                      </div>
+                      <div className="muted" style={{ fontSize: 12 }}>{a.arguments.reason} · {relTime(a.created_at)}</div>
+                    </>
+                  )}
                 </li>
               ))}
             </ul>

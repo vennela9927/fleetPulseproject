@@ -3,9 +3,11 @@ labels (Postgres). The ML job is a platform service: it reads across tenants wit
 pipeline's credentials, and writes scores back per tenant."""
 
 import os
+import time
 from dataclasses import dataclass
 
 import clickhouse_connect
+import clickhouse_connect.driver.exceptions
 import pandas as pd
 import psycopg
 
@@ -56,7 +58,20 @@ def daily(cfg: Config) -> pd.DataFrame:
             WHERE day = {{day:Date}}
             GROUP BY vin, day)"""  # noqa: S608
     days = [r[0] for r in client.query("SELECT DISTINCT day FROM fleet.vehicle_daily ORDER BY day").result_rows]
-    df = pd.concat([client.query_df(sql, parameters={"day": d}) for d in days], ignore_index=True)
+
+    def one_day(d: object) -> pd.DataFrame:
+        # Few threads: the job shares ClickHouse with live ingestion, and fewer parallel readers
+        # need less memory. One retry covers a moment when ingestion's merges peak.
+        for attempt in range(2):
+            try:
+                return client.query_df(sql, parameters={"day": d}, settings={"max_threads": 2})
+            except clickhouse_connect.driver.exceptions.DatabaseError as e:
+                if attempt or "MEMORY_LIMIT_EXCEEDED" not in str(e):
+                    raise
+                time.sleep(5)
+        raise AssertionError("unreachable")
+
+    df = pd.concat([one_day(d) for d in days], ignore_index=True)
     df = df.sort_values(["vin", "day"], ignore_index=True)
     df["vin"] = df["vin"].astype(str).str.strip()
     df["day"] = pd.to_datetime(df["day"])

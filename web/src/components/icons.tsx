@@ -14,4 +14,5 @@ export const IconInfo = (p: P) => <svg {...base} {...p}><circle cx="8" cy="8" r=
 export const IconLogout = (p: P) => <svg {...base} {...p}><path d="M6 14H3V2h3M10.5 11 14 8l-3.5-3M14 8H6" /></svg>
 export const IconPlug = (p: P) => <svg {...base} {...p}><path d="M6 1.8v3M10 1.8v3M4.5 4.8h7v2.7a3.5 3.5 0 0 1-7 0V4.8ZM8 11v3.2" /></svg>
 export const IconGauge = (p: P) => <svg {...base} {...p}><path d="M2.5 11a5.5 5.5 0 1 1 11 0" /><path d="M8 11l3-3.5" /></svg>
-export const IconSpark = (p: P) => <svg {...base} {...p}><path d="M8 1.8 9.4 6.6 14.2 8 9.4 9.4 8 14.2 6.6 9.4 1.8 8 6.6 6.6Z" /></svg>
+export const IconCalendar = (p: P) => <svg {...base} {...p}><rect x="2" y="3" width="12" height="11" rx="1.5" /><path d="M2 6.5h12M5.5 1.8v2.4M10.5 1.8v2.4" /></svg>
+export const IconSpark =(p: P) => <svg {...base} {...p}><path d="M8 1.8 9.4 6.6 14.2 8 9.4 9.4 8 14.2 6.6 9.4 1.8 8 6.6 6.6Z" /></svg>

@@ -51,6 +51,7 @@ CREATE TABLE depot (
     lat         double precision NOT NULL CHECK (lat BETWEEN -90 AND 90),
     lon         double precision NOT NULL CHECK (lon BETWEEN -180 AND 180),
     radius_m    integer NOT NULL DEFAULT 300 CHECK (radius_m > 0),
+    service_bays smallint NOT NULL DEFAULT 12 CHECK (service_bays > 0),   -- inspections per day
     UNIQUE (tenant_id, name)
 );
 

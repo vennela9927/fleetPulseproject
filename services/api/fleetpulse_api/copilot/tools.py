@@ -1,7 +1,7 @@
 """The copilot's tools. Every tool runs as the signed-in user: Postgres row-level security and the
 ClickHouse row policy scope it to the user's tenant, so no prompt can make the model read
-another tenant's data. Read tools return data; the only write tool records a *proposal*, which
-changes nothing until a fleet manager approves it.
+another tenant's data. Read tools return data; the write tools only record *proposals*, which
+change nothing until a fleet manager approves them.
 """
 
 import json
@@ -14,6 +14,7 @@ from fastapi import Request
 
 from ..auth import Principal
 from ..db import ensure_user, tenant_tx
+from ..routers import maintenance
 
 MAX_PROPOSALS_PER_TURN = 3
 
@@ -72,6 +73,19 @@ DECLARATIONS: list[dict[str, Any]] = [
     {"name": "similar_past_failures", "description": "Past breakdowns in the user's fleet whose warning signs most "
      "resemble this vehicle's current ones, with the part that failed and the repair cost.",
      "parameters": {"type": "object", "properties": {"vehicle_id": {"type": "integer"}}, "required": ["vehicle_id"]}},
+    {"name": "service_plan", "description": "The workshop plan for the next days: which at-risk vehicles to inspect "
+     "at which depot on which day, within each depot's daily bays, most valuable first; vehicles too risky to wait "
+     "for a free bay; and the expected net saving. Read-only.",
+     "parameters": {"type": "object", "properties": {
+         "days": {"type": "integer", "description": "Days to plan, starting tomorrow, 1-7. Default 3."},
+         "inspection_cost": {"type": "number", "description": "Cost of one inspection in USD. Default 150."}}}},
+    {"name": "parts_forecast", "description": "Expected breakdowns in the next 7 days per depot and part, with a 90% "
+     "range, so parts can be ordered ahead.", "parameters": {"type": "object", "properties": {}}},
+    {"name": "propose_service_plan", "description": "Propose booking the whole current service plan (see "
+     "service_plan). This does NOT book anything: it creates one proposal a fleet manager must approve.",
+     "parameters": {"type": "object", "properties": {
+         "days": {"type": "integer", "description": "1-7, default 3."},
+         "inspection_cost": {"type": "number", "description": "USD, default 150."}}}},
     {"name": "propose_service_booking", "description": "Propose booking a vehicle into its home depot for service. "
      "This does NOT book anything: it creates a proposal that a fleet manager must approve. Explain why.",
      "parameters": {"type": "object", "properties": {
@@ -233,7 +247,64 @@ class Toolbox:
             return {"note": "this vehicle has no current warning signature (it is not above the risk threshold)"}
         return {"similar_failures": rows}
 
-    # ------------------------------------------------------------------ proposal tool
+    async def _t_service_plan(self, days: int = 3, inspection_cost: float = 150.0) -> dict[str, Any]:
+        days, cost = max(1, min(int(days), 7)), max(10.0, min(float(inspection_cost), 2000.0))
+        async with tenant_tx(self.request.app.state.pg, self.user) as conn:
+            plan, _ = await maintenance.load_plan(conn, cost, days)
+        # A compact view: per depot and day counts, the most valuable bookings, and what cannot wait.
+        items = maintenance.plan_items_for_booking(plan)
+        top = sorted((b for d in plan["depots"] for day in d["days"] for b in day["items"]),
+                     key=lambda b: -b["expected_value_usd"])[:8]
+        return {"summary": plan["summary"], "inspection_cost_usd": cost, "days": plan["days"],
+                "per_depot": [{"depot": d["depot"], "bays_per_day": d["bays_per_day"],
+                               "booked_per_day": {day["date"]: len(day["items"]) for day in d["days"]}}
+                              for d in plan["depots"]],
+                "most_valuable": [{k: b[k] for k in ("vehicle_id", "vin", "probability", "likely_part",
+                                                     "expected_value_usd", "depot", "date", "moved_from")}
+                                  for b in top],
+                "too_risky_to_wait": plan["too_risky_to_wait"][:10], "vehicles_in_plan": len(items)}
+
+    async def _t_parts_forecast(self) -> dict[str, Any]:
+        async with tenant_tx(self.request.app.state.pg, self.user) as conn:
+            parts = await maintenance.load_parts(conn)
+        parts["items"] = [p for p in parts["items"] if p["expected"] >= 1][:30]
+        return parts
+
+    # ------------------------------------------------------------------ proposal tools
+
+    async def _t_propose_service_plan(self, days: int = 3, inspection_cost: float = 150.0) -> dict[str, Any]:
+        if len(self.proposals) >= MAX_PROPOSALS_PER_TURN:
+            return {"error": f"at most {MAX_PROPOSALS_PER_TURN} proposals per request; ask the user to confirm first"}
+        days, cost = max(1, min(int(days), 7)), max(10.0, min(float(inspection_cost), 2000.0))
+        async with tenant_tx(self.request.app.state.pg, self.user) as conn:
+            plan, _ = await maintenance.load_plan(conn, cost, days)
+            items = maintenance.plan_items_for_booking(plan)
+            if not items:
+                return {"error": "the plan is empty: no vehicle's expected saving pays for an inspection"}
+            await ensure_user(conn, self.user)
+            s = plan["summary"]
+            args = {"items": items, "days": plan["days"], "inspection_cost_usd": cost,
+                    "vehicles": len(items), "expected_net_saving_usd": s["expected_net_saving_usd"],
+                    "too_risky_to_wait": s["too_risky_to_wait"]}
+            rationale = (f"Service plan: {len(items)} inspections over {days} day(s), expected net saving "
+                         f"${s['expected_net_saving_usd']:,}")
+            row = await (await conn.execute("""
+                INSERT INTO agent_action (tenant_id, requested_by, conversation_id, tool, arguments, rationale)
+                VALUES (%s, %s, %s, 'book_service_plan', %s::jsonb, %s) RETURNING id, status""",
+                (self.user.tenant_id, self.user.user_id, self.conversation_id, json.dumps(args), rationale))).fetchone()
+            await conn.execute("""
+                INSERT INTO audit_log (tenant_id, actor_id, actor_type, action, resource_type, resource_id, details)
+                VALUES (%s, 'copilot', 'AGENT', 'agent.propose', 'agent_action', %s, %s::jsonb)""",
+                (self.user.tenant_id, str(row["id"]), json.dumps({
+                    "tool": "book_service_plan", "vehicles": len(items),
+                    "expected_net_saving_usd": s["expected_net_saving_usd"], "on_behalf_of": self.user.user_id})))
+        proposal = {"action_id": row["id"], "tool": "book_service_plan", "status": row["status"],
+                    "vehicles": len(items), "days": plan["days"],
+                    "expected_net_saving_usd": s["expected_net_saving_usd"],
+                    "too_risky_to_wait": s["too_risky_to_wait"], "reason": rationale}
+        self.proposals.append(proposal)
+        return {"proposal": proposal,
+                "note": "Recorded as one proposal. Nothing is booked until a fleet manager approves."}
 
     async def _t_propose_service_booking(self, vehicle_id: int, reason: str, days_from_now: int = 1) -> dict[str, Any]:
         if len(self.proposals) >= MAX_PROPOSALS_PER_TURN:
