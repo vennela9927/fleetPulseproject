@@ -8,7 +8,9 @@
 --                merged away. Queries that must be exact use FINAL.
 --                Bulk loads also send an insert_deduplication_token per batch. The rollup
 --                tables below have no such merge key, so without insert deduplication a
---                retried batch would be counted twice in them.
+--                retried batch would be counted twice in them. The window (10000 blocks)
+--                covers ~30 minutes of the live sink's ~5 inserts/s, so a sink that
+--                restarts within that time and replays its last batch is still deduplicated.
 -- Tiering      : hot on local SSD for 3 days, then moved to S3 (SeaweedFS locally), deleted at 90.
 
 CREATE DATABASE IF NOT EXISTS fleet;
@@ -46,7 +48,7 @@ PARTITION BY toYYYYMMDD(ts)
 ORDER BY (vin, ts, seq)
 TTL toDateTime(ts) + INTERVAL 3 DAY TO VOLUME 'cold',
     toDateTime(ts) + INTERVAL 90 DAY DELETE
-SETTINGS storage_policy = 'tiered', index_granularity = 8192, non_replicated_deduplication_window = 1000;
+SETTINGS storage_policy = 'tiered', index_granularity = 8192, non_replicated_deduplication_window = 10000;
 
 -- Per-vehicle, per-minute rollup for dashboards (reads ~60x fewer rows than raw).
 CREATE TABLE IF NOT EXISTS fleet.telemetry_1m
@@ -65,7 +67,7 @@ ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMMDD(minute)
 ORDER BY (tenant_id, vin, minute)
 TTL minute + INTERVAL 30 DAY DELETE
-SETTINGS non_replicated_deduplication_window = 1000;
+SETTINGS non_replicated_deduplication_window = 10000;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS fleet.telemetry_1m_mv TO fleet.telemetry_1m AS
 SELECT vin, tenant_id, toStartOfMinute(ts) AS minute,
@@ -102,7 +104,7 @@ CREATE TABLE IF NOT EXISTS fleet.vehicle_daily
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(day)
 ORDER BY (vin, day)
-SETTINGS non_replicated_deduplication_window = 1000;
+SETTINGS non_replicated_deduplication_window = 10000;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS fleet.vehicle_daily_mv TO fleet.vehicle_daily AS
 SELECT vin, tenant_id, toDate(ts) AS day, any(powertrain) AS powertrain,

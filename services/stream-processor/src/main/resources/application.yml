@@ -1,0 +1,38 @@
+server:
+  port: ${PORT:8083}
+
+spring:
+  application:
+    name: stream-processor
+  main:
+    banner-mode: off
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/fleet}
+    username: fleet_service
+    password: ${SERVICE_DB_PASSWORD:fleet_service_dev}
+    hikari:
+      maximum-pool-size: 4
+
+stream:
+  kafka-bootstrap: ${KAFKA_BOOTSTRAP:localhost:9094}
+  stream-threads: ${STREAM_THREADS:2}
+  replication-factor: ${TOPIC_REPLICATION:1}
+  state-dir: ${STATE_DIR:${java.io.tmpdir}/fleetpulse-stream-processor}
+  redis-url: ${REDIS_URL:redis://localhost:6379}
+  clickhouse-url: ${CLICKHOUSE_URL:http://localhost:8123}
+  clickhouse-user: fleet
+  clickhouse-password: ${CLICKHOUSE_PASSWORD:clickhouse_dev}
+  clickhouse-batch-rows: ${CLICKHOUSE_BATCH_ROWS:50000}
+  clickhouse-flush-ms: ${CLICKHOUSE_FLUSH_MS:5000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      service: stream-processor
