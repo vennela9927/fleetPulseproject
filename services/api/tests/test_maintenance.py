@@ -152,3 +152,54 @@ async def test_a_full_depot_day_cannot_be_overbooked(client, tokens):
     after = (await client.get("/v1/maintenance/plan?days=3", headers=bearer(tokens["zenith"]))).json()
     same = next(d for d in after["depots"] if d["depot_id"] == depot["depot_id"])
     assert same["days"][-1]["already_booked"] == day["already_booked"]
+
+
+def _done(p: float, found: bool, part: str = "Cooling system", found_part: str | None = "Cooling system") -> dict:
+    return {"predicted_probability": p, "fault_found": found, "predicted_component": part,
+            "found_component": found_part if found else None}
+
+
+def test_model_health_needs_enough_inspections_before_judging():
+    from fleetpulse_api.maintenance import model_health
+    assert model_health([_done(0.9, True)] * 5)["status"] == "TOO_FEW"
+
+
+def test_model_health_on_track_when_faults_match_the_promised_probabilities():
+    from fleetpulse_api.maintenance import model_health
+    rows = [_done(0.5, i % 2 == 0) for i in range(100)]          # promised 50%, found 50%
+    h = model_health(rows)
+    assert h["status"] == "ON_TRACK" and h["found_rate"] == 0.5 and h["expected_rate"] == 0.5
+
+
+def test_model_health_flags_an_overconfident_model():
+    from fleetpulse_api.maintenance import model_health
+    rows = [_done(0.95, i < 70) for i in range(100)]             # promised 95%, found 70%
+    h = model_health(rows)
+    assert h["status"] == "BELOW_EXPECTED"
+    assert h["expected_range"][0] > 0.70
+
+
+def test_model_health_counts_the_right_part():
+    from fleetpulse_api.maintenance import model_health
+    rows = [_done(0.9, True)] * 15 + [_done(0.9, True, found_part="Transmission")] * 5 + [_done(0.9, False)] * 5
+    assert model_health(rows)["part_right"] == 0.75
+
+
+@pytest.mark.integration
+async def test_an_inspection_result_is_recorded_once_by_a_manager(client, tokens):
+    plan_ = (await client.get("/v1/maintenance/plan?days=3", headers=bearer(tokens["zenith"]))).json()
+    item = next(b for d in plan_["depots"] for day in d["days"] for b in day["items"])
+    body = {"items": [{"vehicle_id": item["vehicle_id"], "depot_id": item["depot_id"], "date": item["date"]}]}
+    booking = (await client.post("/v1/maintenance/bookings", json=body, headers=bearer(tokens["zenith"]))).json()
+    bid = booking["booking_ids"][0]
+    url = f"/v1/maintenance/bookings/{bid}/result"
+    result = {"fault_found": True, "component": item["likely_part"]}
+    assert (await client.post(url, json=result, headers=bearer(tokens["acme"]))).status_code == 404   # other tenant
+    r = await client.post(url, json=result, headers=bearer(tokens["zenith"]))
+    assert r.status_code == 200 and r.json()["predicted_probability"] == pytest.approx(item["probability"], abs=1e-3)
+    assert (await client.post(url, json=result, headers=bearer(tokens["zenith"]))).status_code == 409
+    bad = await client.post(url, json={"fault_found": True, "component": "Flux capacitor"},
+                            headers=bearer(tokens["zenith"]))
+    assert bad.status_code == 422
+    health = (await client.get("/v1/maintenance/model-health", headers=bearer(tokens["zenith"]))).json()
+    assert health["inspections"] >= 1

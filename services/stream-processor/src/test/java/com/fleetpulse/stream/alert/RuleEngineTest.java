@@ -71,6 +71,34 @@ class RuleEngineTest {
     }
 
     @Test
+    void anErraticCoolantSensorRaisesASensorFaultAndHoldsBackOverheat() {
+        // Flipping between cold and boiling every 10 s: no engine does that, a loose connector does.
+        List<Alert> alerts = feed(Events.at(0).coolant(25), Events.at(10).coolant(140), Events.at(20).coolant(28),
+                Events.at(30).coolant(142), Events.at(40).coolant(140), Events.at(50).coolant(141),
+                Events.at(60).coolant(143), Events.at(70).coolant(142));
+        assertThat(rules(alerts)).containsExactly(AlertRule.SENSOR_FAULT);
+        Alert a = alerts.get(0);
+        assertThat(a.openedAt()).isEqualTo(Events.T0.plusSeconds(10));   // the first impossible jump
+        assertThat(a.severity()).isEqualTo("WARNING");
+        assertThat(a.details()).containsEntry("sensor", "coolant").containsEntry("overheat_alerts_held", true);
+    }
+
+    @Test
+    void aRealOverheatClimbsSmoothlyAndIsNotMistakenForASensorFault() {
+        List<Events> climb = new ArrayList<>();
+        for (int s = 0, c = 90; s <= 120; s += 10, c += 5) climb.add(Events.at(s).coolant(c));
+        assertThat(rules(feed(climb.toArray(Events[]::new)))).containsExactly(AlertRule.ENGINE_OVERHEAT);
+    }
+
+    @Test
+    void jumpsSpreadOverMoreThanFiveMinutesAreNotASensorFault() {
+        // Three odd readings minutes apart: noise to shrug off, not a failing sensor.
+        assertThat(feed(Events.at(0).coolant(30), Events.at(10).coolant(90),
+                Events.at(200).coolant(40), Events.at(210).coolant(95),
+                Events.at(400).coolant(40), Events.at(410).coolant(95))).isEmpty();
+    }
+
+    @Test
     void aReportingGapEndsTheEpisodeInsteadOfBridgingIt() {
         // Hot, then silent for 10 minutes, then hot again: not 10 minutes of overheating.
         assertThat(feed(Events.at(0).coolant(112), Events.at(600).coolant(112))).isEmpty();

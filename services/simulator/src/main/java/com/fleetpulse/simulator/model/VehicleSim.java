@@ -40,6 +40,7 @@ public final class VehicleSim {
 
     private FaultPlan plan;          // scheduled ground-truth fault (may be null)
     private volatile FaultPlan injected;   // demo fault injected at runtime (compressed timeline)
+    private volatile Instant coolantSensorBrokenUntil = Instant.EPOCH;   // demo: the sensor, not the engine, fails
 
     private Mode mode = Mode.PARKED;
     private Instant modeUntil;
@@ -83,6 +84,20 @@ public final class VehicleSim {
         this.injected = new FaultPlan(c, now, now.plus(over), 1.0);
     }
 
+    /**
+     * Demo hook: the coolant sensor fails (a loose connector) until {@code until}. The engine is
+     * fine; the sensor reports physically impossible jumps between cold and boiling.
+     */
+    public void breakCoolantSensor(Instant until) {
+        this.coolantSensorBrokenUntil = until;
+    }
+
+    /** Ground truth for a workshop inspection: the component that is actually failing now, if any. */
+    public FaultPlan.Component faultAt(Instant now) {
+        FaultPlan active = injected != null && injected.severity(now) > 0 ? injected : plan;
+        return active != null && active.severity(now) > 0 ? active.component() : null;
+    }
+
     public Mode mode() {
         return mode;
     }
@@ -116,12 +131,15 @@ public final class VehicleSim {
         if (fc == FaultPlan.Component.IGNITION && rpm > 0) rpm += (int) ((rnd.nextDouble() - 0.5) * 600 * s);
         if (fc == FaultPlan.Component.TRANSMISSION && speed > 20) rpm += (int) (400 * s);
         double soh = baseSoh - (fc == FaultPlan.Component.EV_BATTERY ? 9 * s : 0);
+        double coolantReported = now.isBefore(coolantSensorBrokenUntil)
+                ? (seq % 2 == 0 ? 20 : 135) + rnd.nextDouble() * 15   // flips between cold and boiling
+                : coolant;
 
         return new Sample(vin, model.oem(), seq, now, lat, lon, round1(speed), round1(odo), engineOn(), rpm,
                 ice ? round1(fuel) : null,
                 model.powertrain() != Powertrain.ICE ? round1(soc) : null,
                 model.powertrain() != Powertrain.ICE ? round1(soh) : null,
-                ice ? round1(coolant) : null,
+                ice ? round1(coolantReported) : null,
                 Math.round(battV * 100) / 100.0, dtc, evt);
     }
 

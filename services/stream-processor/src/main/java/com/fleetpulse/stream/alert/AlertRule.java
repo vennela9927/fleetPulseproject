@@ -16,7 +16,8 @@ public enum AlertRule {
     LOW_12V_BATTERY("WARNING", Duration.ofHours(6)),
     HARSH_DRIVING("WARNING", Duration.ofMinutes(30)),
     EV_LOW_SOC("WARNING", Duration.ofHours(1)),
-    EXCESSIVE_IDLING("INFO", Duration.ofMinutes(30));
+    EXCESSIVE_IDLING("INFO", Duration.ofMinutes(30)),
+    SENSOR_FAULT("WARNING", Duration.ofHours(6));
 
     public final String severity;
     public final Duration cooldown;

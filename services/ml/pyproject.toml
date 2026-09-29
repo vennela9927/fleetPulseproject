@@ -19,6 +19,7 @@ dev = ["pytest>=8.3", "ruff>=0.6"]
 fleetpulse-train = "fleetpulse_ml.train:main"
 fleetpulse-score = "fleetpulse_ml.score:main"
 fleetpulse-evaluate = "fleetpulse_ml.evaluate:main"
+fleetpulse-drift = "fleetpulse_ml.drift:main"
 
 [tool.ruff]
 line-length = 120

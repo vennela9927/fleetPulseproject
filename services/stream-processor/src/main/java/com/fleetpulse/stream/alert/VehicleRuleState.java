@@ -11,10 +11,10 @@ import java.util.Arrays;
  */
 final class VehicleRuleState {
 
-    private static final byte VERSION = 1;
+    private static final byte VERSION = 2;
     static final int HARSH_SLOTS = 5;
     private static final int RULES = AlertRule.values().length;
-    static final int BYTES = 1 + 8 * 3 + 2 + 1 + 8 * HARSH_SLOTS + 8 * RULES;
+    static final int BYTES = 1 + 8 * 3 + 2 + 1 + 8 * HARSH_SLOTS + 8 * RULES + 8 * 4 + 1;
 
     /** Latest in-order event; later events with an earlier timestamp are "late". */
     long lastTs;
@@ -22,6 +22,13 @@ final class VehicleRuleState {
     long idleSince;
     boolean overheatRaised;
     boolean idleRaised;
+    /** Coolant sensor plausibility: last reading, and impossible jumps within the current window. */
+    double lastCoolant;
+    long lastCoolantTs;
+    long firstJumpTs;
+    int jumps;
+    /** While the coolant sensor is suspect, its readings do not raise overheat alerts. */
+    long sensorSuspectUntil;
     /** Most recent harsh-event timestamps, ascending; only the first {@code harshCount} are valid. */
     final long[] harsh = new long[HARSH_SLOTS];
     int harshCount;
@@ -64,6 +71,8 @@ final class VehicleRuleState {
         b.put((byte) harshCount);
         for (long t : harsh) b.putLong(t);
         for (long t : lastRaised) b.putLong(t);
+        b.putDouble(lastCoolant).putLong(lastCoolantTs).putLong(firstJumpTs).putLong(sensorSuspectUntil);
+        b.put((byte) Math.min(jumps, 127));
         return b.array();
     }
 
@@ -80,6 +89,11 @@ final class VehicleRuleState {
         s.harshCount = b.get();
         for (int i = 0; i < HARSH_SLOTS; i++) s.harsh[i] = b.getLong();
         for (int i = 0; i < RULES; i++) s.lastRaised[i] = b.getLong();
+        s.lastCoolant = b.getDouble();
+        s.lastCoolantTs = b.getLong();
+        s.firstJumpTs = b.getLong();
+        s.sensorSuspectUntil = b.getLong();
+        s.jumps = b.get();
         return s;
     }
 }

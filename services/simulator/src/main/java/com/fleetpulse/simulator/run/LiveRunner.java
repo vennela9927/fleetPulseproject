@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
+import java.util.Set;
 import java.util.SplittableRandom;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -63,6 +64,8 @@ public final class LiveRunner implements Runnable {
     private volatile int burstFactor = 1;
     private volatile Instant burstUntil = Instant.EPOCH;
     private volatile boolean running = true;
+    /** Demo: makers whose firmware now sends speed in mph while still labelling it kph. */
+    private final Set<String> speedInMph = ConcurrentHashMap.newKeySet();
 
     public LiveRunner(SimProperties props, Sink sink, List<FleetVehicle> vehicles, MeterRegistry metrics) {
         this.props = props;
@@ -134,6 +137,10 @@ public final class LiveRunner implements Runnable {
         VehicleSim.Sample s = v.step(now, dt);
         ObjectNode payload = OemFormatter.format(s);
         String oem = s.oem();
+        if (speedInMph.contains(oem) && payload.path("speed").has("value")) {
+            ObjectNode speed = (ObjectNode) payload.get("speed");
+            speed.put("value", Math.round(speed.get("value").asDouble() / 1.609344 * 10) / 10.0);
+        }
         ledger.get(oem).incrementAndGet();
         ledgerByTenant.computeIfAbsent(tenant, t -> new ConcurrentHashMap<>())
                 .computeIfAbsent(oem, o -> new AtomicLong()).incrementAndGet();
@@ -220,6 +227,48 @@ public final class LiveRunner implements Runnable {
         return vins;
     }
 
+    /** Breaks the coolant sensor (not the engine) on {@code count} of a tenant's combustion vehicles. */
+    public List<String> breakCoolantSensors(int count, Duration over, String tenant) {
+        List<String> vins = new ArrayList<>();
+        SplittableRandom r = new SplittableRandom();
+        Instant until = Instant.now().plus(over);
+        for (int attempts = 0; vins.size() < count && attempts < count * 50; attempts++) {
+            int i = r.nextInt(fleet.length);
+            VehicleSim v = fleet[i];
+            if (tenant != null && !tenant.equals(tenants[i])) continue;
+            if (v.model.oem().equals("DRACO") || v.model.powertrain() == Catalog.Powertrain.EV) continue;
+            v.breakCoolantSensor(until);
+            vins.add(v.vin);
+        }
+        log.warn("live: broke the coolant sensor on {} vehicles", vins.size());
+        return vins;
+    }
+
+    /**
+     * A firmware bug at one maker: speed goes out in mph but is still labelled kph. Every value is
+     * plausible, so validation passes and no alert fires; only the distribution shifts. This is
+     * what feed-drift monitoring is for.
+     */
+    public void speedMph(String oem, boolean on) {
+        if (!oem.equals("AURORA")) throw new IllegalArgumentException("the demo firmware change is for Aurora");
+        if (on) speedInMph.add(oem);
+        else speedInMph.remove(oem);
+        log.warn("live: {} firmware sends speed in {}", oem, on ? "mph labelled kph" : "kph");
+    }
+
+    /** What a mechanic would find on inspection: the actually failing component per VIN, or none. */
+    public Map<String, String> inspect(List<String> vins) {
+        Set<String> wanted = Set.copyOf(vins);
+        Instant now = Instant.now();
+        Map<String, String> out = new LinkedHashMap<>();
+        for (VehicleSim v : fleet) {
+            if (!wanted.contains(v.vin)) continue;
+            FaultPlan.Component c = v.faultAt(now);
+            out.put(v.vin, c == null ? "" : c.name());
+        }
+        return out;
+    }
+
     public Map<String, Object> stats() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("vehicles", fleet.length);
@@ -239,6 +288,7 @@ public final class LiveRunner implements Runnable {
         m.put("startedAt", startedAt.toString());
         m.put("firstSeq", firstSeq);
         m.put("paused", paused);
+        m.put("speedInMph", List.copyOf(speedInMph));
         m.put("duplicatesSent", (long) duplicates.count());
         m.put("invalidSent", (long) invalid.count());
         m.put("outOfOrderSent", (long) outOfOrder.count());

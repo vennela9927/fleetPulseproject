@@ -125,6 +125,65 @@ function CostCard({ m }: { m: ModelInfo['metrics'] }) {
   )
 }
 
+interface ModelHealth {
+  inspections: number
+  faults_found: number
+  found_rate: number | null
+  expected_rate: number | null
+  expected_range: [number, number] | null
+  part_right: number | null
+  status: 'TOO_FEW' | 'ON_TRACK' | 'BELOW_EXPECTED' | 'ABOVE_EXPECTED'
+  min_inspections: number
+  window_days: number
+}
+
+const HEALTH_TEXT: Record<ModelHealth['status'], string> = {
+  TOO_FEW: 'Not enough inspections yet to judge.',
+  ON_TRACK: 'On track: the workshop finds faults about as often as the model promised.',
+  BELOW_EXPECTED: 'Below what the model promised: its probabilities are too confident for today\'s fleet. Recalibrate or retrain on these results.',
+  ABOVE_EXPECTED: 'Faults are found more often than predicted: the model is too cautious. Retrain to catch more.',
+}
+
+/** The feedback loop: inspections booked from the model's scores, graded by what mechanics found. */
+function WorkshopCard() {
+  const h = useQuery({ queryKey: ['model-health'], queryFn: () => api<ModelHealth>('/v1/maintenance/model-health'),
+    refetchInterval: 30_000 })
+  const d = h.data
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-head">
+        <h2>The model, graded by the workshop</h2>
+        <span className="muted" style={{ fontSize: 12.5 }}>inspections booked from its scores, last {d?.window_days ?? 30} days</span>
+      </div>
+      {!d ? <div className="empty">{h.isError ? 'Could not load.' : 'Loading…'}</div> : !d.inspections ? (
+        <div className="empty">No inspection results yet. Record them on the <Link to="/plan">service plan</Link>.</div>
+      ) : (
+        <div className="card-body" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 16 }}>
+          <div className="tile" style={{ padding: 0 }}>
+            <div className="label">Faults found</div>
+            <div className="value num">{d.found_rate === null ? '–' : pct(d.found_rate)}</div>
+            <div className="sub">{d.faults_found} of {d.inspections} inspections</div>
+          </div>
+          <div className="tile" style={{ padding: 0 }}>
+            <div className="label">The model promised</div>
+            <div className="value num">{d.expected_rate === null ? '–' : pct(d.expected_rate)}</div>
+            <div className="sub">{d.expected_range ? `expected range ${pct(d.expected_range[0])}–${pct(d.expected_range[1])}` : ' '}</div>
+          </div>
+          <div className="tile" style={{ padding: 0 }}>
+            <div className="label">Right part named</div>
+            <div className="value num">{d.part_right === null ? '–' : pct(d.part_right)}</div>
+            <div className="sub">when a fault was found</div>
+          </div>
+          <div style={{ alignSelf: 'center', fontSize: 13 }}>
+            <span className="pill" style={{ marginBottom: 6 }}>{d.status.replace(/_/g, ' ').toLowerCase()}</span>
+            <div className="secondary" style={{ marginTop: 6 }}>{HEALTH_TEXT[d.status]}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function MakersCard({ rows }: { rows: NonNullable<ModelInfo['metrics']['unseen_maker']> }) {
   const f = (x: number | null) => (x === null ? '–' : x.toFixed(2))
   return (
@@ -214,6 +273,7 @@ export function AtRisk() {
           <CostCard m={m} />
         </div>
       )}
+      {m && <WorkshopCard />}
       {m?.unseen_maker && <MakersCard rows={m.unseen_maker} />}
 
       <div className="card">

@@ -35,6 +35,7 @@ const RULES: Record<string, string> = {
   BATTERY_DEGRADATION: 'Battery degradation',
   HIGH_FAILURE_RISK: 'High failure risk',
   UNAPPROVED_CLUSTER: 'Unapproved parking cluster',
+  SENSOR_FAULT: 'Sensor fault',
 }
 
 export function ruleLabel(code: string): string {
@@ -55,6 +56,11 @@ export function alertDetail(rule: string, d: Record<string, unknown>): string {
       const saved = n('est_cost_avoided_usd')
       return `${Math.round((n('probability') ?? 0) * 100)}% risk of a ${String(d.component ?? 'component').toLowerCase()} failure within 7 days`
         + (saved ? ` · about $${count(Math.round(saved))} saved if serviced` : '')
+    }
+    case 'SENSOR_FAULT': {
+      const r = Array.isArray(d.readings_c) ? (d.readings_c as number[]) : []
+      return `${String(d.sensor ?? 'A')} sensor jumped ${r.length === 2 ? `${r[0]} → ${r[1]} °C` : 'impossibly'}, `
+        + `${n('jumps')} times: check the sensor, not the engine`
     }
     default: return ''
   }

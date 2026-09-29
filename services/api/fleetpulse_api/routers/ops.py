@@ -16,23 +16,24 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
 from .. import audit
-from ..auth import CurrentUser, Manager
+from ..auth import CurrentUser, Manager, PlatformAdmin
 from ..db import ensure_user, tenant_tx
 from ..errors import ApiError
 from ..ratelimit import RateLimited, rate_limit
+from .maintenance import record_result
 
 router = APIRouter(prefix="/v1/ops", tags=["operations"])
 
 Component = Literal["COOLING", "IGNITION", "ELECTRICAL", "EV_BATTERY", "TRANSMISSION", "BRAKES"]
 
 
-async def _simulator(request: Request, method: str, path: str, **params: Any) -> dict[str, Any]:
+async def _simulator(request: Request, method: str, path: str, json_body: Any = None, **params: Any) -> Any:
     settings = request.app.state.settings
     if not settings.demo_controls:
         raise ApiError(404, "Not found", "demo controls are disabled")
     try:
         async with httpx.AsyncClient(base_url=settings.simulator_url, timeout=10) as client:
-            resp = await client.request(method, path, params=params)
+            resp = await client.request(method, path, params=params, json=json_body)
     except httpx.HTTPError:
         raise ApiError(503, "Simulator unavailable", "the vehicle simulator is not running") from None
     if resp.status_code == 503:
@@ -107,3 +108,63 @@ async def pause(request: Request, user: Manager, _: RateLimited,
         await ensure_user(conn, user)
         await audit.record(conn, request, user, "demo.pause" if paused else "demo.resume", "simulator", None)
     return result
+
+
+@router.post("/sensor-fault")
+async def sensor_fault(request: Request, user: Manager, _: RateLimited,
+                       count: Annotated[int, Query(ge=1, le=20)] = 3,
+                       minutes: Annotated[int, Query(ge=1, le=60)] = 10) -> dict[str, Any]:
+    """Breaks the coolant *sensor* (not the engine) on a few of the caller's vehicles."""
+    result = await _simulator(request, "POST", "/admin/sensor-fault", count=count, minutes=minutes,
+                              tenant=user.tenant_id)
+    async with tenant_tx(request.app.state.pg, user) as conn:
+        await ensure_user(conn, user)
+        await audit.record(conn, request, user, "demo.sensor_fault", "simulator", None,
+                           {"vehicles": len(result["vins"]), "minutes": minutes})
+    return result
+
+
+@router.post("/firmware")
+async def firmware(request: Request, user: PlatformAdmin, _: RateLimited,
+                   mph: Annotated[bool, Query()] = True) -> dict[str, Any]:
+    """A firmware bug at Aurora: speed sent in mph but labelled kph. Affects every tenant's Aurora
+    vehicles, so only a platform operator can trigger it."""
+    result = await _simulator(request, "POST", "/admin/firmware", oem="AURORA", mph=str(mph).lower())
+    async with tenant_tx(request.app.state.pg, user) as conn:
+        await ensure_user(conn, user)
+        await audit.record(conn, request, user, "demo.firmware_bug" if mph else "demo.firmware_fixed", "simulator",
+                           None, result)
+    return result
+
+
+# The simulator's ground-truth components, named as the model names parts.
+_PART = {"COOLING": "Cooling system", "IGNITION": "Ignition / misfire", "ELECTRICAL": "12 V electrical",
+         "EV_BATTERY": "High-voltage battery", "TRANSMISSION": "Transmission", "BRAKES": "ABS / brakes"}
+
+
+@router.post("/workshop-results")
+async def workshop_results(request: Request, user: Manager, _: RateLimited,
+                           limit: Annotated[int, Query(ge=1, le=500)] = 100) -> dict[str, Any]:
+    """Demo stand-in for the workshop system: inspects the caller's next ``limit`` booked vehicles
+    in the simulator (which knows each vehicle's real fault) and records what a mechanic would find.
+    Vehicles outside the live simulation have no ground truth and are left booked."""
+    async with tenant_tx(request.app.state.pg, user) as conn:
+        booked = await (await conn.execute("""
+            SELECT b.id, trim(v.vin) AS vin FROM service_booking b JOIN vehicle v ON v.id = b.vehicle_id
+            WHERE b.status = 'SCHEDULED' ORDER BY b.scheduled_for, b.id LIMIT %s""", (limit,))).fetchall()
+    if not booked:
+        return {"recorded": 0, "faults_found": 0, "not_simulated": 0}
+    truth: dict[str, str] = await _simulator(request, "POST", "/admin/inspect", json_body=[b["vin"] for b in booked])
+    recorded = found = 0
+    async with tenant_tx(request.app.state.pg, user) as conn:
+        await ensure_user(conn, user)
+        for b in booked:
+            if b["vin"] not in truth:
+                continue
+            part = _PART.get(truth[b["vin"]])
+            await record_result(conn, b["id"], part is not None, part)
+            recorded += 1
+            found += part is not None
+        await audit.record(conn, request, user, "demo.workshop_results", "service_booking", None,
+                           {"recorded": recorded, "faults_found": found})
+    return {"recorded": recorded, "faults_found": found, "not_simulated": len(booked) - recorded}

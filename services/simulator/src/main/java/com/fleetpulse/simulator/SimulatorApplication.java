@@ -141,5 +141,35 @@ public class SimulatorApplication implements CommandLineRunner {
             List<String> vins = r.inject(component, Math.min(count, 500), Duration.ofMinutes(minutes), tenant);
             return ResponseEntity.ok(Map.of("component", component, "vins", vins));
         }
+
+        @PostMapping("/sensor-fault")
+        ResponseEntity<?> sensorFault(@RequestParam(defaultValue = "5") int count,
+                                      @RequestParam(defaultValue = "10") int minutes,
+                                      @RequestParam(required = false) String tenant) {
+            LiveRunner r = app.runner();
+            if (r == null) return ResponseEntity.status(503).build();
+            return ResponseEntity.ok(Map.of("vins", r.breakCoolantSensors(Math.min(count, 100),
+                    Duration.ofMinutes(minutes), tenant)));
+        }
+
+        @PostMapping("/firmware")
+        ResponseEntity<?> firmware(@RequestParam String oem, @RequestParam boolean mph) {
+            LiveRunner r = app.runner();
+            if (r == null) return ResponseEntity.status(503).build();
+            try {
+                r.speedMph(oem, mph);
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            }
+            return ResponseEntity.ok(Map.of("oem", oem, "speedInMph", mph));
+        }
+
+        /** What a mechanic finds: the component actually failing on each VIN ("" when healthy). */
+        @PostMapping("/inspect")
+        ResponseEntity<?> inspect(@org.springframework.web.bind.annotation.RequestBody List<String> vins) {
+            LiveRunner r = app.runner();
+            if (r == null) return ResponseEntity.status(503).build();
+            return ResponseEntity.ok(r.inspect(vins.subList(0, Math.min(vins.size(), 2000))));
+        }
     }
 }

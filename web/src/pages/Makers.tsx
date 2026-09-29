@@ -181,7 +181,98 @@ export function Makers() {
           </div>
         )}
       </div>
+      <FeedHealth admin={admin} />
       {error && <div className="toast" role="alert" onClick={() => setError(null)}>{error}</div>}
     </>
+  )
+}
+
+interface DriftRow {
+  oem_code: string
+  field: string
+  psi: number
+  baseline_mean: number | null
+  current_mean: number | null
+  status: 'OK' | 'WATCH' | 'DRIFT'
+  hint: string | null
+}
+
+const FIELD_LABEL: Record<string, string> = {
+  speed_kmh: 'Speed', rpm: 'RPM', coolant_c: 'Coolant', batt_v: '12 V battery', fuel_pct: 'Fuel', soc_pct: 'EV charge',
+}
+
+/** Feed drift: a maker's data still valid but distributed differently from its own recent past. */
+function FeedHealth({ admin }: { admin: boolean }) {
+  const qc = useQueryClient()
+  const drift = useQuery({
+    queryKey: ['drift'],
+    queryFn: () => api<{ checked_at: string | null; items: DriftRow[] }>('/v1/oem-mappings/drift'),
+    refetchInterval: 20_000,
+  })
+  const firmware = useMutation({
+    mutationFn: (mph: boolean) => api<{ speedInMph: boolean }>(`/v1/ops/firmware?mph=${mph}`, { method: 'POST' }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['drift'] }),
+  })
+  const items = drift.data?.items ?? []
+  const makers = [...new Set(items.map((i) => i.oem_code))]
+  const fields = Object.keys(FIELD_LABEL).filter((f) => items.some((i) => i.field === f))
+  const flagged = items.filter((i) => i.status !== 'OK')
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="card-head">
+        <h2>Feed health</h2>
+        <span className="muted" style={{ fontSize: 12.5 }}>
+          {drift.data?.checked_at ? `each maker's last 10 minutes vs its previous hours · checked ${relTime(drift.data.checked_at)}` : ' '}
+        </span>
+      </div>
+      {!items.length ? <div className="empty">{drift.isLoading ? 'Loading…' : 'No drift check has run yet.'}</div> : (
+        <>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Maker</th>{fields.map((f) => <th key={f} style={{ textAlign: 'right' }}>{FIELD_LABEL[f]}</th>)}</tr></thead>
+              <tbody>{makers.map((m) => (
+                <tr key={m}>
+                  <td>{title(m)}</td>
+                  {fields.map((f) => {
+                    const c = items.find((i) => i.oem_code === m && i.field === f)
+                    return (
+                      <td key={f} className="num" style={{ textAlign: 'right' }}>
+                        {!c ? '–' : c.status === 'OK' ? <span className="muted">stable</span>
+                          : <span className="pill" style={c.status === 'DRIFT' ? { background: 'var(--status-serious)', color: '#fff' } : undefined}>
+                              {c.status.toLowerCase()} · {c.psi.toFixed(2)}</span>}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          {flagged.length > 0 && (
+            <ul style={{ margin: 0, padding: '10px 16px 0 32px', fontSize: 13 }}>
+              {flagged.map((f) => (
+                <li key={`${f.oem_code}-${f.field}`}>
+                  <strong>{title(f.oem_code)} {FIELD_LABEL[f.field]?.toLowerCase() ?? f.field}</strong>: average {f.baseline_mean} → {f.current_mean}
+                  {f.hint && <span className="secondary"> ({f.hint})</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+      <div style={{ padding: '10px 16px 14px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span className="muted" style={{ fontSize: 12.5, flex: 1, minWidth: 260 }}>
+          Values that pass validation can still be wrong: a firmware update sending mph as km/h raises no alert but
+          skews every trip and the failure model's inputs. A maker is flagged only when it moves differently from the
+          other makers (population stability index above 0.25), so a fleet-wide change such as time of day is not blamed on one feed.
+        </span>
+        {admin && (
+          <span style={{ display: 'flex', gap: 8 }}>
+            <button className="btn small" disabled={firmware.isPending} onClick={() => firmware.mutate(true)}>Demo: Aurora firmware bug</button>
+            <button className="btn small" disabled={firmware.isPending} onClick={() => firmware.mutate(false)}>Fix it</button>
+          </span>
+        )}
+      </div>
+    </div>
   )
 }

@@ -70,6 +70,74 @@ function Vehicle({ e }: { e: PlanEntry }) {
   )
 }
 
+interface Inspection {
+  id: number
+  vehicle_id: number
+  vin: string
+  depot: string
+  scheduled_for: string
+  predicted_probability: number | null
+  predicted_component: string | null
+}
+
+/** Closing the loop: what the mechanic found becomes the label the model is graded on. */
+function InspectionsCard() {
+  const qc = useQueryClient()
+  const manager = hasRole('fleet_manager')
+  const list = useQuery({ queryKey: ['inspections'],
+    queryFn: () => api<{ items: Inspection[] }>('/v1/maintenance/inspections?status=SCHEDULED&limit=8') })
+  const refresh = () => ['inspections', 'model-health', 'plan'].forEach((k) => void qc.invalidateQueries({ queryKey: [k] }))
+  const record = useMutation({
+    mutationFn: (v: { id: number; found: boolean; part: string | null }) =>
+      api(`/v1/maintenance/bookings/${v.id}/result`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fault_found: v.found, component: v.found ? v.part : null }) }),
+    onSuccess: refresh,
+  })
+  const workshop = useMutation({
+    mutationFn: () => api<{ recorded: number; faults_found: number }>('/v1/ops/workshop-results?limit=100', { method: 'POST' }),
+    onSuccess: refresh,
+  })
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-head">
+        <h2>Record what the workshop found</h2>
+        {manager && (
+          <button className="btn small" disabled={workshop.isPending} onClick={() => workshop.mutate()}
+                  title="Demo: the simulator knows each vehicle's real fault and plays the workshop system">
+            {workshop.isPending ? 'Importing…' : workshop.data ? `Imported ${workshop.data.recorded} results` : 'Import results from the workshop (demo)'}
+          </button>
+        )}
+      </div>
+      {!list.data?.items.length ? <div className="empty">{list.isLoading ? 'Loading…' : 'No booked inspections waiting for a result.'}</div> : (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Booked</th><th>Vehicle</th><th>Model said</th><th /></tr></thead>
+            <tbody>{list.data.items.map((i) => (
+              <tr key={i.id}>
+                <td>{day(i.scheduled_for.slice(0, 10))}<div className="muted" style={{ fontSize: 12 }}>{i.depot}</div></td>
+                <td><Link to={`/vehicles/${i.vehicle_id}`} className="mono">{i.vin}</Link></td>
+                <td>{i.predicted_probability === null ? '–' : `${pct(i.predicted_probability)}, ${i.predicted_component ?? 'unknown part'}`}</td>
+                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  {manager && <>
+                    <button className="btn small" disabled={record.isPending}
+                            onClick={() => record.mutate({ id: i.id, found: true, part: i.predicted_component })}>Fault found</button>{' '}
+                    <button className="btn small" disabled={record.isPending}
+                            onClick={() => record.mutate({ id: i.id, found: false, part: null })}>Nothing found</button>
+                  </>}
+                </td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+      <p className="muted" style={{ fontSize: 12.5, margin: 0, padding: '10px 16px 14px' }}>
+        Each result is compared with the probability the model gave when the inspection was booked. The At risk page
+        shows whether faults are being found as often as the model promised.
+      </p>
+    </div>
+  )
+}
+
 export function ServicePlan() {
   const qc = useQueryClient()
   const [cost, setCost] = useInspectionCost()
@@ -228,6 +296,8 @@ export function ServicePlan() {
           </div>
         </>
       )}
+
+      <InspectionsCard />
 
       <div className="card">
         <div className="card-head">

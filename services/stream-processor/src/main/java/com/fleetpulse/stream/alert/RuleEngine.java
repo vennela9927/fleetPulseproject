@@ -39,6 +39,11 @@ public final class RuleEngine {
     static final double EV_LOW_SOC_PCT = 10;
     static final Duration IDLE_FOR = Duration.ofMinutes(10);
     static final Duration MAX_GAP = Duration.ofMinutes(2);
+    /** Engine coolant has thermal mass: it cannot move this far between two readings a few seconds apart. */
+    static final double COOLANT_MAX_JUMP_C = 25;
+    static final int SENSOR_FAULT_JUMPS = 3;
+    static final Duration SENSOR_JUMP_WINDOW = Duration.ofMinutes(5);
+    static final Duration SENSOR_SUSPECT_FOR = Duration.ofMinutes(30);
 
     private final Set<String> criticalDtcs;
     private final Clock clock;
@@ -64,6 +69,7 @@ public final class RuleEngine {
                 s.overheatSince = s.idleSince = 0;
                 s.overheatRaised = s.idleRaised = false;
             }
+            coolantSensor(s, e, ts, out);
             overheat(s, e, ts, out);
             idling(s, e, ts, out);
             s.lastTs = ts;
@@ -106,8 +112,41 @@ public final class RuleEngine {
         }
     }
 
+    /**
+     * Sensor fault, not part fault: coolant that jumps by more than {@value #COOLANT_MAX_JUMP_C} °C
+     * between consecutive readings, {@value #SENSOR_FAULT_JUMPS} times within five minutes, is a
+     * failing sensor or connector. The vehicle needs the sensor checked, not a workshop slot for an
+     * engine that is fine, so overheat alerts from that sensor are held back while it is suspect.
+     */
+    private void coolantSensor(VehicleRuleState s, CanonicalEvent e, long ts, List<Alert> out) {
+        Double c = e.coolantC();
+        if (c == null) return;
+        boolean comparable = s.lastCoolantTs != 0 && ts - s.lastCoolantTs <= MAX_GAP.toMillis();
+        if (comparable && Math.abs(c - s.lastCoolant) > COOLANT_MAX_JUMP_C) {
+            if (s.firstJumpTs == 0 || ts - s.firstJumpTs > SENSOR_JUMP_WINDOW.toMillis()) {
+                s.firstJumpTs = ts;
+                s.jumps = 0;
+            }
+            s.jumps++;
+            if (s.jumps >= SENSOR_FAULT_JUMPS) {
+                boolean newlySuspect = ts >= s.sensorSuspectUntil;
+                s.sensorSuspectUntil = ts + SENSOR_SUSPECT_FOR.toMillis();
+                if (newlySuspect && fire(s, AlertRule.SENSOR_FAULT, ts)) {
+                    out.add(alert(AlertRule.SENSOR_FAULT, e, s.firstJumpTs, Map.of(
+                            "sensor", "coolant", "jumps", s.jumps,
+                            "window_seconds", (ts - s.firstJumpTs) / 1000,
+                            "readings_c", List.of(s.lastCoolant, c),
+                            "max_plausible_change_c", COOLANT_MAX_JUMP_C,
+                            "overheat_alerts_held", true)));
+                }
+            }
+        }
+        s.lastCoolant = c;
+        s.lastCoolantTs = ts;
+    }
+
     private void overheat(VehicleRuleState s, CanonicalEvent e, long ts, List<Alert> out) {
-        if (e.coolantC() == null || e.coolantC() <= OVERHEAT_C) {
+        if (e.coolantC() == null || e.coolantC() <= OVERHEAT_C || ts < s.sensorSuspectUntil) {
             s.overheatSince = 0;
             s.overheatRaised = false;
             return;

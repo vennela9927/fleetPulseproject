@@ -221,7 +221,30 @@ CREATE TABLE service_booking (
     status         text NOT NULL DEFAULT 'SCHEDULED' CHECK (status IN ('SCHEDULED','DONE','CANCELLED')),
     created_by     uuid REFERENCES app_user(id),
     source         text NOT NULL CHECK (source IN ('USER','AGENT')),
-    created_at     timestamptz NOT NULL DEFAULT now()
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    -- What the model said when the booking was made, and what the mechanic then found: the
+    -- feedback loop that checks the model against reality after it is deployed.
+    predicted_probability real CHECK (predicted_probability BETWEEN 0 AND 1),
+    predicted_component   text,
+    completed_at   timestamptz,
+    fault_found    boolean,
+    found_component text,
+    CHECK ((status = 'DONE') = (fault_found IS NOT NULL))
+);
+
+-- Feed drift: each maker's recent readings compared with its own history (population stability
+-- index per field). Platform-level, like oem_mapping: describes a maker's feed, not a tenant.
+CREATE TABLE feed_drift (
+    checked_at    timestamptz NOT NULL,
+    oem_code      text NOT NULL,
+    field         text NOT NULL,
+    psi           real NOT NULL,
+    baseline_mean real,
+    current_mean  real,
+    current_n     integer NOT NULL,
+    status        text NOT NULL CHECK (status IN ('OK','WATCH','DRIFT')),
+    hint          text,
+    PRIMARY KEY (checked_at, oem_code, field)
 );
 
 -- Every tool call the agent wants to make that changes data is stored here first

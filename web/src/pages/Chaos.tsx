@@ -51,6 +51,10 @@ export function Chaos() {
     onSuccess: (r) => { setInjected(r); setError(null) },
     onError,
   })
+  const sensor = useMutation({
+    mutationFn: () => api<{ vins: string[] }>(`/v1/ops/sensor-fault${query({ count: 3, minutes: 10 })}`, { method: 'POST' }),
+    onError,
+  })
   const burst = useMutation({
     mutationFn: () => api<unknown>(`/v1/ops/burst${query({ factor: 3, seconds: 120 })}`, { method: 'POST' }),
     onSuccess: refresh, onError,
@@ -143,6 +147,20 @@ export function Chaos() {
                 {injected.vins.slice(0, 8).map((v, i) => (
                   <span key={v}>{i > 0 && ', '}<Link to={`/vehicles/by-vin/${v}`} className="mono">{v}</Link></span>
                 ))}{injected.vins.length > 8 && ` and ${injected.vins.length - 8} more`}
+              </div>
+            )}
+            <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '14px 0' }} />
+            <p className="secondary" style={{ marginTop: 0 }}>
+              Or break a coolant <em>sensor</em> on 3 vehicles: the engine is fine, the readings jump between cold and boiling.
+              Expect a sensor-fault warning, not an overheat alarm and a wasted workshop visit.
+            </p>
+            <button className="btn" disabled={!manager || sensor.isPending} onClick={() => sensor.mutate()}>Break a sensor</button>
+            {sensor.data && (
+              <div className="secondary" style={{ fontSize: 12.5, marginTop: 8 }}>
+                Sensor broken on{' '}
+                {sensor.data.vins.map((v, i) => (
+                  <span key={v}>{i > 0 && ', '}<Link to={`/vehicles/by-vin/${v}`} className="mono">{v}</Link></span>
+                ))}
               </div>
             )}
           </div>

@@ -72,6 +72,23 @@ async def onboarding_status(request: Request, user: CurrentUser, _: RateLimited)
     return {"active_versions": body.get("mappings", {}), "replays": body.get("replays", {})}
 
 
+@router.get("/drift")
+async def feed_drift(request: Request, user: CurrentUser, _: RateLimited) -> dict[str, Any]:
+    """The latest feed-drift check: each maker's recent readings against its own history, per field.
+    Describes the makers' feeds, not any tenant's data, so every signed-in user may read it."""
+    async with tenant_tx(request.app.state.pg, user) as conn:
+        rows = await (await conn.execute("""
+            SELECT checked_at, oem_code, field, psi, baseline_mean, current_mean, current_n, status, hint
+            FROM feed_drift WHERE checked_at = (SELECT max(checked_at) FROM feed_drift)
+            ORDER BY oem_code, field""")).fetchall()
+        # A drift that started recently is worth showing even if the latest check has calmed down.
+        recent = await (await conn.execute("""
+            SELECT oem_code, field, max(checked_at) AS last_seen, max(psi) AS worst_psi
+            FROM feed_drift WHERE status = 'DRIFT' AND checked_at > now() - interval '1 hour'
+            GROUP BY 1, 2""")).fetchall()
+    return {"checked_at": rows[0]["checked_at"] if rows else None, "items": rows, "recent_drift": recent}
+
+
 @router.get("/{mapping_id}")
 async def get_mapping(mapping_id: int, request: Request, user: CurrentUser, _: RateLimited) -> dict[str, Any]:
     async with tenant_tx(request.app.state.pg, user) as conn:
@@ -157,3 +174,4 @@ async def approve(mapping_id: int, request: Request, user: PlatformAdmin, _: Rat
                            {"oem": row["oem_code"], "version": row["version"],
                             "retired": [r["version"] for r in retired]})
     return {"id": mapping_id, "oem_code": row["oem_code"], "version": row["version"], "status": "ACTIVE"}
+

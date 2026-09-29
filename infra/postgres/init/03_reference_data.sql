@@ -78,4 +78,5 @@ INSERT INTO alert_rule (code, description, severity) VALUES
     ('EXCESSIVE_IDLING',    'Engine idling for more than 10 minutes',                'INFO'),
     ('BATTERY_DEGRADATION', 'EV battery state of health dropping faster than normal','WARNING'),
     ('HIGH_FAILURE_RISK',   'Predicted failure within 7 days above threshold',       'CRITICAL'),
+    ('SENSOR_FAULT',        'Sensor readings physically impossible: check the sensor, not the part', 'WARNING'),
     ('UNAPPROVED_CLUSTER',  'Group of vehicles parked together away from any depot', 'WARNING');

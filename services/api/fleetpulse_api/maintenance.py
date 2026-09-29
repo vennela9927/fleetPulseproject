@@ -145,6 +145,41 @@ def plan_summary(p: Plan, depots: list[Depot], already_booked: dict[tuple[int, d
     }
 
 
+MIN_INSPECTIONS = 20
+
+
+def model_health(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The model graded by the workshop. Each completed inspection has the probability the model
+    gave when it was booked and whether the mechanic found a fault. If the model is still
+    calibrated, faults found ~ sum(p) with variance sum(p(1-p)); well below that (more than two
+    standard deviations) means the world has moved away from the training data: retrain.
+    """
+    done = [r for r in rows if r["predicted_probability"] is not None and r["fault_found"] is not None]
+    n = len(done)
+    found = sum(1 for r in done if r["fault_found"])
+    expected = sum(float(r["predicted_probability"]) for r in done)
+    sd = math.sqrt(sum(float(r["predicted_probability"]) * (1 - float(r["predicted_probability"])) for r in done))
+    with_part = [r for r in done if r["fault_found"] and r.get("found_component") and r.get("predicted_component")]
+    if n < MIN_INSPECTIONS:
+        status = "TOO_FEW"
+    elif found < expected - 2 * sd:
+        status = "BELOW_EXPECTED"
+    elif found > expected + 2 * sd:
+        status = "ABOVE_EXPECTED"
+    else:
+        status = "ON_TRACK"
+    return {
+        "inspections": n, "faults_found": found,
+        "found_rate": round(found / n, 3) if n else None,
+        "expected_rate": round(expected / n, 3) if n else None,
+        "expected_range": [max(0.0, round((expected - 2 * sd) / n, 3)), min(1.0, round((expected + 2 * sd) / n, 3))]
+        if n else None,
+        "part_right": round(sum(1 for r in with_part if r["found_component"] == r["predicted_component"])
+                            / len(with_part), 3) if with_part else None,
+        "status": status, "min_inspections": MIN_INSPECTIONS,
+    }
+
+
 def parts_forecast(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Rows of (depot, part, sum of p, sum of p(1-p), vehicles above threshold) -> expected failures
     with a 90% range. Each vehicle fails or not independently with its calibrated probability, so the

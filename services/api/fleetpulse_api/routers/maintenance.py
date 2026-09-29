@@ -10,7 +10,16 @@ from .. import audit
 from ..auth import CurrentUser, Manager, Principal
 from ..db import ensure_user, tenant_tx
 from ..errors import ApiError
-from ..maintenance import Candidate, Depot, first_plan_day, parts_forecast, plan, plan_summary, slot_time
+from ..maintenance import (
+    Candidate,
+    Depot,
+    first_plan_day,
+    model_health,
+    parts_forecast,
+    plan,
+    plan_summary,
+    slot_time,
+)
 from ..ratelimit import RateLimited
 
 router = APIRouter(prefix="/v1/maintenance", tags=["maintenance"])
@@ -94,12 +103,14 @@ async def book_items(conn: Any, user: Principal, items: list[dict[str, Any]], so
         reason = (f"Inspect {r['predicted_component'] or 'vehicle'}: {float(r['failure_prob_7d']):.0%} risk of a "
                   f"breakdown within 7 days, about ${float(r['est_cost_avoided_usd'] or 0):,.0f} avoided"
                   if r["failure_prob_7d"] is not None else "Planned inspection")
-        rows.append((user.tenant_id, vid, did, slot_time(day), reason, user.user_id, source))
+        rows.append((user.tenant_id, vid, did, slot_time(day), reason, user.user_id, source,
+                     r["failure_prob_7d"], r["predicted_component"]))
     booked = []
     for row in rows:
         booked.append((await (await conn.execute("""
-            INSERT INTO service_booking (tenant_id, vehicle_id, depot_id, scheduled_for, reason, created_by, source)
-            VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""", row)).fetchone())["id"])
+            INSERT INTO service_booking (tenant_id, vehicle_id, depot_id, scheduled_for, reason, created_by, source,
+                                         predicted_probability, predicted_component)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""", row)).fetchone())["id"])
     return booked
 
 
@@ -165,3 +176,71 @@ def plan_items_for_booking(summary: dict[str, Any]) -> list[dict[str, Any]]:
     return [{"vehicle_id": b["vehicle_id"], "vin": b["vin"], "depot_id": b["depot_id"], "depot": b["depot"],
              "date": b["date"], "probability": b["probability"], "likely_part": b["likely_part"]}
             for d in summary["depots"] for day in d["days"] for b in day["items"]]
+
+
+# ---------------------------------------------------------------------------- the feedback loop
+
+PARTS = ["Cooling system", "Ignition / misfire", "12 V electrical", "High-voltage battery", "Transmission",
+         "ABS / brakes"]
+
+
+class InspectionResult(BaseModel):
+    fault_found: bool
+    component: str | None = Field(None, description="The part found failing; one of the model's parts")
+
+
+async def record_result(conn: Any, booking_id: int, fault_found: bool, component: str | None) -> dict[str, Any]:
+    row = await (await conn.execute("""
+        UPDATE service_booking SET status = 'DONE', completed_at = now(), fault_found = %s, found_component = %s
+        WHERE id = %s AND status = 'SCHEDULED' RETURNING id, vehicle_id, predicted_probability, predicted_component""",
+        (fault_found, component if fault_found else None, booking_id))).fetchone()
+    if row is None:
+        exists = await (await conn.execute(
+            "SELECT status FROM service_booking WHERE id = %s", (booking_id,))).fetchone()
+        if exists is None:
+            raise ApiError(404, "Not found", "no such booking")
+        raise ApiError(409, "Conflict", f"booking is already {exists['status']}")
+    return row
+
+
+@router.post("/bookings/{booking_id}/result")
+async def post_result(booking_id: int, body: InspectionResult, request: Request, user: Manager,
+                      _: RateLimited) -> dict[str, Any]:
+    """The mechanic's finding. It closes the booking and becomes a label the model is graded on."""
+    if body.component is not None and body.component not in PARTS:
+        raise ApiError(422, "Unprocessable", f"component must be one of: {', '.join(PARTS)}")
+    async with tenant_tx(request.app.state.pg, user) as conn:
+        await ensure_user(conn, user)
+        row = await record_result(conn, booking_id, body.fault_found, body.component)
+        await audit.record(conn, request, user, "maintenance.inspection_result", "service_booking", str(booking_id),
+                           {"fault_found": body.fault_found, "component": body.component})
+    return {**row, "status": "DONE", "fault_found": body.fault_found}
+
+
+@router.get("/inspections")
+async def inspections(request: Request, user: CurrentUser, _: RateLimited,
+                      status: str = Query("SCHEDULED", pattern="^(SCHEDULED|DONE)$"),
+                      limit: Annotated[int, Query(ge=1, le=200)] = 50) -> dict[str, Any]:
+    async with tenant_tx(request.app.state.pg, user) as conn:
+        rows = await (await conn.execute("""
+            SELECT b.id, b.vehicle_id, trim(v.vin) AS vin, d.name AS depot, b.scheduled_for, b.source,
+                   b.predicted_probability, b.predicted_component, b.completed_at, b.fault_found, b.found_component
+            FROM service_booking b JOIN vehicle v ON v.id = b.vehicle_id JOIN depot d ON d.id = b.depot_id
+            WHERE b.status = %s
+            ORDER BY CASE WHEN %s = 'DONE' THEN b.completed_at END DESC NULLS LAST, b.scheduled_for, b.id
+            LIMIT %s""", (status, status, limit))).fetchall()
+    return {"items": rows}
+
+
+@router.get("/model-health")
+async def get_model_health(request: Request, user: CurrentUser, _: RateLimited) -> dict[str, Any]:
+    """How the model's alerts are turning out in the workshop, against what its probabilities promised."""
+    async with tenant_tx(request.app.state.pg, user) as conn:
+        rows = await (await conn.execute("""
+            SELECT predicted_probability, predicted_component, fault_found, found_component
+            FROM service_booking WHERE status = 'DONE' AND completed_at > now() - interval '30 days'""")).fetchall()
+        model = await (await conn.execute("""
+            SELECT version, (metrics->'model_alert_threshold'->>'precision')::float AS test_precision
+            FROM risk_model WHERE is_active""")).fetchone()
+    return {**model_health(rows), "model_version": model["version"] if model else None,
+            "test_precision": model["test_precision"] if model else None, "window_days": 30}

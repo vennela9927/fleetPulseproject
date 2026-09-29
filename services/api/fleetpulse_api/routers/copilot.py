@@ -106,10 +106,15 @@ async def _decide(request: Request, user: Manager, action_id: int, approve: bool
             # Created by the approving human's decision, inside RLS: a proposal can only book this
             # tenant's vehicle into this tenant's depot.
             booking = await (await conn.execute("""
-                INSERT INTO service_booking (tenant_id, vehicle_id, depot_id, scheduled_for, reason, created_by, source)
-                VALUES (%s, %s, %s, %s, %s, %s, 'AGENT') RETURNING id""",
+                INSERT INTO service_booking (tenant_id, vehicle_id, depot_id, scheduled_for, reason, created_by, source,
+                                             predicted_probability, predicted_component)
+                SELECT %s, %s, %s, %s, %s, %s, 'AGENT', r.failure_prob_7d, r.predicted_component
+                FROM (SELECT 1) one LEFT JOIN LATERAL (
+                    SELECT failure_prob_7d, predicted_component FROM risk_score
+                    WHERE vehicle_id = %s ORDER BY scored_at DESC LIMIT 1) r ON true
+                RETURNING id""",
                 (user.tenant_id, args["vehicle_id"], args["depot_id"], args["scheduled_for"], args["reason"],
-                 user.user_id))).fetchone()
+                 user.user_id, args["vehicle_id"]))).fetchone()
             result: dict[str, Any] = {"booking_id": booking["id"]}
         elif action["tool"] == "book_service_plan":
             # Every item is re-checked now (tenant, not already booked, a free bay): the plan may
