@@ -1,0 +1,23 @@
+{
+  "oem": "DRACO",
+  "version": 1,
+  "wmi": "DRC",
+  "fields": {
+    "vin":      { "path": "truck.vin_no" },
+    "seq":      { "path": "sequence" },
+    "ts":       { "path": "sent_at", "transform": "datetime", "format": "yyyy-MM-dd HH:mm:ss" },
+    "lat":      { "path": "truck.telemetry.pos.latitude" },
+    "lon":      { "path": "truck.telemetry.pos.longitude" },
+    "speedKmh": { "path": "truck.telemetry.velocity_kmh" },
+    "odoKm":    { "path": "truck.telemetry.odometer.km" },
+    "engineOn": { "path": "truck.telemetry.engine_state", "transform": "bool" },
+    "rpm":      { "path": "truck.telemetry.engine_rpm" },
+    "coolantC": { "path": "truck.telemetry.coolant_temp.celsius" },
+    "fuelPct":  { "path": "truck.telemetry.fuel_level_percent" },
+    "battV":    { "path": "truck.telemetry.battery_voltage" },
+    "dtc":      { "path": "truck.alarms[*].code", "transform": "list" },
+    "evt":      { "path": "event_kind", "transform": "map",
+                  "map": { "BRAKE_HARD": "HARSH_BRAKE", "ACCEL_HARD": "HARSH_ACCEL",
+                           "KEY_ON": "IGNITION_ON", "KEY_OFF": "IGNITION_OFF", "*": "PERIODIC" } }
+  }
+}

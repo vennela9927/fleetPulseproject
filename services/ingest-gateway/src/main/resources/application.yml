@@ -1,0 +1,31 @@
+server:
+  port: ${PORT:8081}
+  tomcat:
+    max-http-form-post-size: 4MB
+    max-swallow-size: 4MB
+
+spring:
+  application:
+    name: ingest-gateway
+  main:
+    banner-mode: off
+  threads:
+    virtual:
+      enabled: true   # each request blocks on Kafka acks; virtual threads make that cheap
+
+gateway:
+  # SHA-256 of the dev key "dev-oem-partner-key". Production injects the hash from the secrets manager.
+  api-key-sha256: ${INGEST_API_KEY_SHA256:2396159208c2eff07f72e890a3e348522f11a318e4e812123eb5ed9bdcb17b12}
+  oems: AURORA,BOREALIS,CYGNUS,DRACO
+  max-batch: 1000
+  max-pending-records: ${GATEWAY_MAX_PENDING:50000}
+  kafka-bootstrap: ${KAFKA_BOOTSTRAP:localhost:9094}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    tags:
+      service: ingest-gateway

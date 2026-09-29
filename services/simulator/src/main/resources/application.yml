@@ -1,0 +1,43 @@
+server:
+  port: ${PORT:8090}
+
+spring:
+  application:
+    name: simulator
+  main:
+    banner-mode: off
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/fleet}
+    username: fleet_service
+    password: ${SERVICE_DB_PASSWORD:fleet_service_dev}
+    hikari:
+      maximum-pool-size: 4
+
+sim:
+  modes: ${SIM_MODES:seed,run}
+  vehicles: ${SIM_VEHICLES:100000}
+  interval-seconds: ${SIM_INTERVAL_SECONDS:10}
+  sink: ${SIM_SINK:http}
+  gateway-url: ${GATEWAY_URL:http://localhost:8081}
+  api-key: ${INGEST_API_KEY:dev-oem-partner-key}
+  kafka-bootstrap: ${KAFKA_BOOTSTRAP:localhost:9094}
+  batch-size: 500
+  max-in-flight: ${SIM_MAX_IN_FLIGHT:32}
+  duplicate-rate: ${SIM_DUPLICATE_RATE:0.01}
+  out-of-order-rate: ${SIM_OUT_OF_ORDER_RATE:0.02}
+  invalid-rate: ${SIM_INVALID_RATE:0.001}
+  backfill-days: ${SIM_BACKFILL_DAYS:21}
+  backfill-sample-minutes: ${SIM_BACKFILL_SAMPLE_MINUTES:30}
+  backfill-threads: ${SIM_BACKFILL_THREADS:4}
+  clickhouse-url: ${CLICKHOUSE_URL:http://localhost:8123}
+  clickhouse-user: fleet
+  clickhouse-password: ${CLICKHOUSE_PASSWORD:clickhouse_dev}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    tags:
+      service: simulator

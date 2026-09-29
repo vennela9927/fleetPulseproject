@@ -1,0 +1,23 @@
+server:
+  port: ${PORT:8082}
+
+spring:
+  application:
+    name: normalizer
+  main:
+    banner-mode: off
+
+normalizer:
+  kafka-bootstrap: ${KAFKA_BOOTSTRAP:localhost:9094}
+  stream-threads: ${STREAM_THREADS:2}
+  replication-factor: ${TOPIC_REPLICATION:1}
+  state-dir: ${STATE_DIR:${java.io.tmpdir}/fleetpulse-normalizer}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    tags:
+      service: normalizer
