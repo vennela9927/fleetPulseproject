@@ -95,9 +95,10 @@ protected by composite foreign keys so the copy cannot drift.
   Kafka topic within about a second, without a restart. The parked events are then replayed.
 - Mappings are versioned and audited; Postgres is the record, and the active set is re-published
   to Kafka at start-up, so a rebuilt broker gets back every maker onboarded since.
-- **Feed drift per maker** (ADR 0004) compares each maker's last 10 minutes with its own history
-  (population stability index), relative to the other makers. In the firmware-bug demo it flagged
-  Aurora speed and read it as "looks like mph sent as km/h".
+- **Feed drift per maker** (ADR 0004) compares each maker's last 5 minutes with the 40 before
+  (population stability index; speed and rpm while moving), relative to the other makers. In a live
+  run it stayed quiet with no bug, flagged the Aurora firmware bug within 5 minutes, and by 7
+  minutes read it as "looks like mph sent as km/h".
 
 ## 7. The failure model
 
@@ -145,7 +146,7 @@ tuned threshold.
 | Risk | Control | Observed (simulated data, 2026-09-30) |
 |---|---|---|
 | A broken sensor raises false alarms | Physical rate limits on coolant readings raise SENSOR_FAULT and hold overheat alerts | 3 broken sensors flagged within 20 s each, no overheat alert raised |
-| A maker's feed changes silently | Feed drift per maker, relative to the other makers | Aurora firmware bug flagged (PSI 1.67) with the likely cause |
+| A maker's feed changes silently | Feed drift per maker: last 5 minutes against the 40 before, speed and rpm while moving, relative to the other makers | With no bug, three checks all stable; Aurora firmware bug flagged WATCH after 2 min 17 s and DRIFT after 4 min 40 s, nothing else flagged (live run, 2026-09-30) |
 | The model drifts from reality | Workshop results grade the model: faults found vs the sum of promised probabilities | 66 inspections: 86% found against 96% promised; the loop caught the 99% cap as overconfident |
 
 ## 10. Security, reliability and operations

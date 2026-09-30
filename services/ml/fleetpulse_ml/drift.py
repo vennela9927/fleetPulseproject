@@ -3,9 +3,9 @@
 A firmware update can change a feed without breaking it: speed in mph still labelled km/h passes
 every validation rule and raises no alert, but it quietly skews trip distances, harsh-driving
 rates and the failure model's inputs. This job compares each maker's last few minutes with its
-previous 40 minutes (when that history is continuous), field by field, using the population stability index (PSI), and records the
-result for the Vehicle makers page. Conventional reading: under 0.1 stable, 0.1-0.25 watch,
-above 0.25 drifted.
+previous 40 minutes (when that history is continuous), field by field, using the population
+stability index (PSI), and records the result for the Vehicle makers page. Conventional reading:
+under 0.1 stable, 0.1-0.25 watch, above 0.25 drifted.
 
     uv run python -m fleetpulse_ml.drift            # one check
     uv run python -m fleetpulse_ml.drift --watch 60 # every minute
@@ -44,9 +44,10 @@ def hint(field: str, before: float, after: float, fleet_ratio: float = 1.0) -> s
     if not before or abs(before) < 1e-6 or fleet_ratio <= 0:
         return None
     ratio = after / before / fleet_ratio
-    if field == "speed_kmh" and 0.58 < ratio < 0.66:
+    # Wide bands: measured on live data the ratio lands near 1/1.609 but not on it (0.665 observed).
+    if field == "speed_kmh" and 0.55 < ratio < 0.70:
         return "about 0.62x its usual level: looks like mph sent as km/h"
-    if field == "speed_kmh" and 1.52 < ratio < 1.70:
+    if field == "speed_kmh" and 1.45 < ratio < 1.80:
         return "about 1.6x its usual level: looks like km/h converted twice"
     if field == "coolant_c" and abs(after - (before * 9 / 5 + 32)) < 0.1 * after:
         return "matches the old values converted to Fahrenheit"
@@ -55,7 +56,20 @@ def hint(field: str, before: float, after: float, fleet_ratio: float = 1.0) -> s
     return None
 
 
-def check(cfg: data.Config, baseline_minutes: int = 60, current_minutes: int = 10) -> pd.DataFrame:
+MOTION_FIELDS = ["speed_kmh", "rpm"]
+
+
+def moving_only(df: pd.DataFrame) -> pd.DataFrame:
+    """Speed and rpm only while the vehicle moves. The share of parked or charging vehicles changes
+    through the day, and differently per maker (EVs, trucks): that is the fleet operating, not the
+    feed changing, and it raised false alarms. A unit mistake still shows in moving speeds."""
+    out = df.copy()
+    out[MOTION_FIELDS] = out[MOTION_FIELDS].astype(float)
+    out.loc[~(out["speed_kmh"] > 0), MOTION_FIELDS] = np.nan
+    return out
+
+
+def check(cfg: data.Config, baseline_minutes: int = 60, current_minutes: int = 5) -> pd.DataFrame:
     """Each maker's last ``current_minutes`` against its own recent past: from ``baseline_minutes``
     ago up to twice the current window ago. A maker is judged only when its baseline is continuous
     (data in at least 90% of its minutes): after a restart or an outage the check says nothing rather
@@ -80,6 +94,7 @@ def check(cfg: data.Config, baseline_minutes: int = 60, current_minutes: int = 1
     rows = []
     if cur.empty or base.empty:  # traffic paused or just started: nothing to compare yet
         return classify(pd.DataFrame(rows))
+    base, cur = moving_only(base), moving_only(cur)
     for oem in sorted(o for o in set(cur["oem"]) if covered.get(o, 0) >= need):
         b_oem, c_oem = base[base["oem"] == oem], cur[cur["oem"] == oem]
         for f in FIELDS:

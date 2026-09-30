@@ -223,7 +223,7 @@ function FeedHealth({ admin }: { admin: boolean }) {
       <div className="card-head">
         <h2>Feed health</h2>
         <span className="muted" style={{ fontSize: 12.5 }}>
-          {drift.data?.checked_at ? `each maker's last 10 minutes vs the 40 minutes before (makers with a gap in that history are not judged) · checked ${relTime(drift.data.checked_at)}` : ' '}
+          {drift.data?.checked_at ? `each maker's last 5 minutes vs the 40 minutes before; speed and rpm while moving; makers with a gap in that history are not judged · checked ${relTime(drift.data.checked_at)}` : ' '}
         </span>
       </div>
       {!items.length ? <div className="empty">{drift.isLoading ? 'Loading…' : 'No drift check has run yet.'}</div> : (

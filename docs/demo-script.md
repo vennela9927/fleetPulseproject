@@ -37,8 +37,10 @@ As `ops.admin`, **Vehicle makers**:
 2. Propose the mapping (`infra/onboarding/draco-mapping.json`) → **Preview** on the parked events
    ("N of N map cleanly") → **Approve**.
 3. The parked events replay; Draco appears on the map without any restart.
-4. If there's time: **Demo: Aurora firmware bug** → within a few minutes Feed health flags Aurora
-   speed, "looks like mph sent as km/h" → **Fix it**.
+4. **Demo: Aurora firmware bug**. Press it about 7 minutes before you show Feed health (for
+   example at the start of the recording): it flags Aurora speed within 5 minutes and names the
+   cause, "looks like mph sent as km/h", at about 7. Then **Fix it**. Aurora stays on WATCH for up
+   to 40 minutes afterwards, while the bug period is still in its baseline.
 
 ## 3:30 to 4:45: nothing lost (demo 1)
 

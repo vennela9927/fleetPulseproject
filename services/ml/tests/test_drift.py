@@ -1,6 +1,7 @@
 import numpy as np
+import pandas as pd
 
-from fleetpulse_ml.drift import hint, psi
+from fleetpulse_ml.drift import hint, moving_only, psi
 
 
 def test_same_distribution_is_stable():
@@ -48,3 +49,25 @@ def test_the_unit_hint_divides_out_a_fleet_wide_change():
     # Everyone slowed to a sixth (night-time); Aurora slowed to a sixth AND switched to mph.
     assert hint("speed_kmh", 25.0, 25.0 / 6 / 1.609344, fleet_ratio=1 / 6) is not None
     assert hint("speed_kmh", 25.0, 25.0 / 6, fleet_ratio=1 / 6) is None
+
+
+def test_more_parked_vehicles_is_not_drift_but_mph_still_is():
+    rng = np.random.default_rng(3)
+
+    def fleet(parked_share: float, scale: float = 1.0) -> pd.DataFrame:
+        n = 20_000
+        moving = rng.random(n) >= parked_share
+        speed = np.where(moving, rng.normal(50, 12, n).clip(1, None) * scale, 0.0)
+        rpm = np.where(moving, 1100 + speed * 24, 0).astype(int)
+        return pd.DataFrame({"speed_kmh": speed, "rpm": rpm})
+
+    before, more_parked = moving_only(fleet(0.3)), moving_only(fleet(0.6))
+    assert psi(before["speed_kmh"].dropna().to_numpy(), more_parked["speed_kmh"].dropna().to_numpy()) < 0.1
+    mph = moving_only(fleet(0.3, scale=0.621))
+    assert psi(before["speed_kmh"].dropna().to_numpy(), mph["speed_kmh"].dropna().to_numpy()) > 0.25
+
+
+def test_the_mph_hint_fits_what_live_data_measured():
+    # Aurora's moving speed during the live firmware-bug run, 2026-09-30: 44.3 -> 29.47 km/h (0.665x).
+    assert "mph" in hint("speed_kmh", 44.3, 29.47)
+    assert hint("speed_kmh", 44.3, 44.3 * 0.8) is None   # an ordinary slowdown gets no unit hint
