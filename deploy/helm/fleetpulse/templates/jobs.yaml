@@ -1,0 +1,54 @@
+{{- $v := .Values -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fleetpulse-models
+  labels: {{- include "fleetpulse.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $v.jobs.modelStorage.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources: { requests: { storage: {{ $v.jobs.modelStorage.size }} } }
+{{- range $job, $cmd := dict "train" "fleetpulse-train" "score" "fleetpulse-score" "drift" "fleetpulse-drift" }}
+{{- $spec := index $v.jobs $job }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ml-{{ $job }}
+  labels: {{- include "fleetpulse.labels" $ | nindent 4 }}
+spec:
+  schedule: {{ $spec.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels: {{- include "fleetpulse.labels" $ | nindent 12 }}
+            app.kubernetes.io/name: ml-{{ $job }}
+        spec:
+          restartPolicy: Never
+          {{- include "fleetpulse.podSecurity" $ | nindent 10 }}
+          containers:
+            - name: {{ $job }}
+              image: {{ include "fleetpulse.image" (dict "root" $ "name" $v.jobs.image) }}
+              command: [{{ $cmd | quote }}]
+              env:
+                - { name: CLICKHOUSE_HOST, value: {{ (urlParse $v.external.clickhouseUrl).hostname | quote }} }
+                - name: CLICKHOUSE_PASSWORD
+                  {{- include "fleetpulse.secret" (dict "root" $ "key" "clickhouse-password") | nindent 18 }}
+                - name: SERVICE_DB_PASSWORD
+                  {{- include "fleetpulse.secret" (dict "root" $ "key" "service-db-password") | nindent 18 }}
+                - { name: POSTGRES_DSN, value: {{ printf "postgresql://fleet_service:$(SERVICE_DB_PASSWORD)@%s:%v/%s" $v.external.postgres.host $v.external.postgres.port $v.external.postgres.database | quote }} }
+                - { name: MODEL_DIR, value: /models }
+              resources: {{- toYaml $spec.resources | nindent 16 }}
+              {{- include "fleetpulse.containerSecurity" $ | nindent 14 }}
+              volumeMounts:
+                - { name: models, mountPath: /models }
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - { name: models, persistentVolumeClaim: { claimName: fleetpulse-models } }
+            - { name: tmp, emptyDir: {} }
+{{- end }}

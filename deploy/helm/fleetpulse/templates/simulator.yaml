@@ -1,0 +1,39 @@
+{{- if .Values.demo.enabled }}
+# Demo only: the vehicle simulator, posting to the gateway like an OEM partner would.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simulator
+  labels: {{- include "fleetpulse.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: simulator } }
+  template:
+    metadata:
+      labels: {{- include "fleetpulse.labels" . | nindent 8 }}
+        app.kubernetes.io/name: simulator
+    spec:
+      {{- include "fleetpulse.podSecurity" . | nindent 6 }}
+      containers:
+        - name: simulator
+          image: {{ include "fleetpulse.image" (dict "root" . "name" "simulator") }}
+          env:
+            - { name: SIM_MODES, value: "seed,run" }
+            - { name: SIM_VEHICLES, value: {{ .Values.demo.simulatorVehicles | quote }} }
+            - { name: GATEWAY_URL, value: "http://ingest-gateway:8081" }
+            - { name: POSTGRES_URL, value: {{ printf "jdbc:postgresql://%s:%v/%s" .Values.external.postgres.host .Values.external.postgres.port .Values.external.postgres.database | quote }} }
+            - name: SERVICE_DB_PASSWORD
+              {{- include "fleetpulse.secret" (dict "root" . "key" "service-db-password") | nindent 14 }}
+          resources: { requests: { cpu: "1", memory: 1Gi }, limits: { memory: 1536Mi } }
+          {{- include "fleetpulse.containerSecurity" . | nindent 10 }}
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: simulator
+spec:
+  selector: { app.kubernetes.io/name: simulator }
+  ports: [{ port: 8090, targetPort: 8090 }]
+{{- end }}

@@ -1,0 +1,17 @@
+# AWS (EKS). Endpoints come from `terraform output` in deploy/terraform/aws.
+image:
+  registry: 123456789012.dkr.ecr.ap-south-1.amazonaws.com/fleetpulse
+external:
+  kafkaBootstrap: b-1.fleetpulse.kafka.ap-south-1.amazonaws.com:9092,b-2.fleetpulse.kafka.ap-south-1.amazonaws.com:9092,b-3.fleetpulse.kafka.ap-south-1.amazonaws.com:9092
+  postgres: { host: fleetpulse.cluster-xyz.ap-south-1.rds.amazonaws.com }
+  clickhouseUrl: https://abc123.ap-south-1.aws.clickhouse.cloud:8443
+  redisUrl: rediss://fleetpulse.xyz.cache.amazonaws.com:6379
+  oidcIssuer: https://auth.fleetpulse.example.com/realms/fleetpulse
+  oidcJwksUrl: https://auth.fleetpulse.example.com/realms/fleetpulse/protocol/openid-connect/certs
+ingress:
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+jobs:
+  modelStorage: { storageClass: gp3 }

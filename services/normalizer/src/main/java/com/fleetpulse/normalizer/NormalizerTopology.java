@@ -20,6 +20,7 @@ import org.apache.kafka.streams.state.Stores;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Map;
 
 /**
  * <pre>
@@ -38,13 +39,21 @@ public final class NormalizerTopology {
 
     private NormalizerTopology() {}
 
+    /** Changelog compacted soon after writes, so rebuilding a thread's state reads about the state's
+     *  size, not every update since the start. A full replay stalled threads long enough to be fenced,
+     *  which triggered another rebuild: a rebalance storm under load. */
+    static final Map<String, String> COMPACT_CHANGELOG = Map.of(
+            "segment.bytes", String.valueOf(32 * 1024 * 1024), "segment.ms", "600000",
+            "min.cleanable.dirty.ratio", "0.1");
+
     public static Topology build(MappingRegistry registry, MeterRegistry metrics, Clock clock) {
         Topology t = new Topology();
         t.addSource("raw", Serdes.ByteArray().deserializer(), Serdes.ByteArray().deserializer(), RAW);
         t.addProcessor("normalize", () -> new Normalize(registry, metrics, clock), "raw");
         t.addProcessor("dedup", () -> new Dedup(metrics), "normalize");
         t.addStateStore(Stores.keyValueStoreBuilder(
-                Stores.persistentKeyValueStore(DEDUP_STORE), Serdes.String(), Serdes.ByteArray()), "dedup");
+                Stores.persistentKeyValueStore(DEDUP_STORE), Serdes.String(), Serdes.ByteArray())
+                .withLoggingEnabled(COMPACT_CHANGELOG), "dedup");
         t.addSink("canonical", CANONICAL, Serdes.String().serializer(), Serdes.ByteArray().serializer(), "dedup");
         t.addSink("dlq", DLQ, Serdes.ByteArray().serializer(), Serdes.ByteArray().serializer(), "normalize");
         return t;

@@ -1,9 +1,16 @@
 import type { Feature, Point } from 'geojson'
-import { type GeoJSONSource, LngLatBounds, Map as MapLibreMap, type MapLayerMouseEvent, NavigationControl, Popup } from 'maplibre-gl'
+import { type GeoJSONSource, LngLatBounds, Map as MapLibreMap, type MapLayerMouseEvent, NavigationControl, Popup, setWorkerUrl } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
+// MapLibre finds its worker next to its own module, which bundling moves. Let Vite bundle the
+// worker (with the chunk it imports) into one file and tell MapLibre where it is.
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LiveMap as LiveMapData, LiveStatus } from '../api'
 import { count, fixed, relTime } from '../format'
+
+// Only in the production bundle: the dev server serves MapLibre unbundled (optimizeDeps.exclude),
+// where its own worker lookup already works.
+if (import.meta.env.PROD) setWorkerUrl(maplibreWorkerUrl)
 
 const STATUSES: { key: LiveStatus; label: string; token: string }[] = [
   { key: 'DRIVING', label: 'Driving', token: '--series-1' },

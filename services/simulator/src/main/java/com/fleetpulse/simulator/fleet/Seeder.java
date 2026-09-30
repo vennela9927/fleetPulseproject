@@ -100,28 +100,35 @@ public class Seeder {
         log.info("seed: {} vehicles and drivers loaded in {} ms", n, System.currentTimeMillis() - t0);
     }
 
-    /** Stores the built-in specs as ACTIVE v1 and publishes them to the compacted mappings topic. */
+    /**
+     * Stores the built-in specs as ACTIVE v1, then publishes every ACTIVE mapping in Postgres to the
+     * compacted mappings topic. Postgres is the record, so a broker that lost its data (or a new
+     * cluster) gets back the makers onboarded since, not only the built-ins. Registries keep the
+     * highest version per maker, so publishing an older one again changes nothing.
+     */
     void seedMappings() throws Exception {
+        for (String name : BUILT_IN_MAPPINGS) {
+            String spec;
+            try (InputStream in = getClass().getResourceAsStream("/mappings/" + name + ".json")) {
+                spec = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            }
+            JsonNode node = Json.MAPPER.readTree(spec);
+            jdbc.update("""
+                    INSERT INTO oem_mapping (oem_code, version, spec, status, proposed_by)
+                    VALUES (?, ?, ?::jsonb, 'ACTIVE', 'seed') ON CONFLICT (oem_code, version) DO NOTHING""",
+                    node.get("oem").asText(), node.get("version").asInt(), spec);
+        }
+        List<Map<String, Object>> active = jdbc.queryForList(
+                "SELECT oem_code, spec::text AS spec FROM oem_mapping WHERE status = 'ACTIVE' ORDER BY oem_code, version");
         Properties p = new Properties();
         p.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, props.kafkaBootstrap());
         p.put(ProducerConfig.ACKS_CONFIG, "all");
         try (KafkaProducer<String, String> producer =
                      new KafkaProducer<>(p, new StringSerializer(), new StringSerializer())) {
-            for (String name : BUILT_IN_MAPPINGS) {
-                String spec;
-                try (InputStream in = getClass().getResourceAsStream("/mappings/" + name + ".json")) {
-                    spec = new String(in.readAllBytes(), StandardCharsets.UTF_8);
-                }
-                JsonNode node = Json.MAPPER.readTree(spec);
-                String oem = node.get("oem").asText();
-                jdbc.update("""
-                        INSERT INTO oem_mapping (oem_code, version, spec, status, proposed_by)
-                        VALUES (?, ?, ?::jsonb, 'ACTIVE', 'seed') ON CONFLICT (oem_code, version) DO NOTHING""",
-                        oem, node.get("version").asInt(), spec);
-                producer.send(new ProducerRecord<>("oem.mappings", oem, Json.MAPPER.writeValueAsString(node))).get();
-            }
+            for (Map<String, Object> row : active)
+                producer.send(new ProducerRecord<>("oem.mappings", (String) row.get("oem_code"), (String) row.get("spec"))).get();
         }
-        log.info("seed: published built-in mappings {}", BUILT_IN_MAPPINGS);
+        log.info("seed: published {} active mappings", active.size());
     }
 
     /** Vehicles for the live run and backfill, with their home depot and tenant. */

@@ -1,0 +1,66 @@
+# FleetPulse on any Kubernetes. Everything cloud-specific lives in `external` and `ingress`:
+# the same images and templates run on EKS, GKE or AKS (see values-aws.yaml, values-gcp.yaml).
+
+image:
+  registry: ghcr.io/fleetpulse
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+# Managed services, reached over the network. Secrets are never in values: each is a key in
+# `secretName`, created by the platform (External Secrets, sealed secrets or the cloud's CSI driver).
+external:
+  secretName: fleetpulse-secrets        # keys: app-db-password, service-db-password, clickhouse-password,
+                                        #       clickhouse-api-password, gemini-api-key
+  kafkaBootstrap: kafka:9092
+  kafkaReplicationFactor: 3
+  postgres: { host: postgres, port: 5432, database: fleet }
+  clickhouseUrl: http://clickhouse:8123
+  redisUrl: redis://redis:6379
+  oidcIssuer: https://auth.example.com/realms/fleetpulse
+  oidcJwksUrl: https://auth.example.com/realms/fleetpulse/protocol/openid-connect/certs
+
+ingress:
+  enabled: true
+  className: nginx
+  host: fleetpulse.example.com
+  tlsSecret: fleetpulse-tls
+  annotations: {}
+
+# Demo controls (fault injection, firmware bug) and the simulator are off in production.
+demo:
+  enabled: false
+  simulatorVehicles: 100000
+
+services:
+  ingest-gateway:
+    port: 8081
+    replicas: 3
+    autoscale: { min: 3, max: 12, cpu: 70 }
+    resources: { requests: { cpu: 500m, memory: 512Mi }, limits: { memory: 768Mi } }
+  normalizer:
+    port: 8082
+    replicas: 3
+    stateful: true            # Kafka Streams local state; rebuilt from changelogs if lost
+    resources: { requests: { cpu: 500m, memory: 768Mi }, limits: { memory: 1Gi } }
+  stream-processor:
+    port: 8083
+    replicas: 3
+    stateful: true
+    resources: { requests: { cpu: "1", memory: 1Gi }, limits: { memory: 1536Mi } }
+  api:
+    port: 8000
+    replicas: 3
+    autoscale: { min: 3, max: 10, cpu: 70 }
+    resources: { requests: { cpu: 250m, memory: 256Mi }, limits: { memory: 512Mi } }
+  web:
+    port: 8080
+    replicas: 2
+    resources: { requests: { cpu: 50m, memory: 32Mi }, limits: { memory: 64Mi } }
+
+jobs:
+  image: ml
+  train: { schedule: "0 2 * * 0", resources: { requests: { cpu: "2", memory: 3Gi }, limits: { memory: 4Gi } } }
+  score: { schedule: "30 0 * * *", resources: { requests: { cpu: "1", memory: 2Gi }, limits: { memory: 3Gi } } }
+  drift: { schedule: "*/5 * * * *", resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { memory: 768Mi } } }
+  # Trained models are shared between the train and score jobs.
+  modelStorage: { size: 2Gi, storageClass: "" }

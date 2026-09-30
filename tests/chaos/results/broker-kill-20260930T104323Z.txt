@@ -1,0 +1,13 @@
+10:43:25 broker-kill test: broker down for 30s
+10:43:28 before: sent=2640687 stored=2629679
+10:43:28 docker kill fleetpulse-kafka-1 (SIGKILL, no clean shutdown)
+10:44:02 during outage: sent=2659363 (the simulator keeps generating; the gateway refuses and it retries)
+10:44:03 broker restarted; waiting for it to answer requests (healthcheck)
+10:44:42 broker healthy after 70s from the kill
+10:45:42 pausing new traffic to reconcile
+10:45:45 settling: sent=2874026 stored=2865939 diff=8087
+10:45:57 settling: sent=2874026 stored=2873554 diff=472
+10:46:08 settling: sent=2874026 stored=2873944 diff=82
+10:46:19 settling: sent=2874026 stored=2874026 diff=0
+10:46:21 PASS: sent=2874026, stored unique (vin, seq)=2874026, counted in the per-minute rollup=2874026 (no event lost or counted twice)
+10:46:21 report: tests/chaos/results/broker-kill-20260930T104323Z.txt

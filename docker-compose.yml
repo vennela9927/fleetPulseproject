@@ -1,11 +1,43 @@
 name: fleetpulse
 
-# One-command local stack:  docker compose up -d
-# Memory limits keep the whole stack inside ~9 GB on a 16 GB laptop.
+# One command for the whole platform:   docker compose up -d --build
+#   dashboard http://localhost:3000   (acme.manager / acme-demo-2026, see README)
+# First run only, to get history and a trained model (see README, "Data"):
+#   docker compose --profile setup run --rm backfill
+#   docker compose --profile jobs run --rm ml fleetpulse-train
+#   docker compose --profile jobs run --rm ml fleetpulse-score
+# Data viewers (Kafka UI, Adminer, RedisInsight):  docker compose --profile tools up -d
+#
+# Memory limits add up to about 12 GB; the containers used about 5 GB in our 100K-vehicle run
+# (Docker Desktop with 8 GB and 12 CPUs). On a smaller machine set SIM_VEHICLES=20000.
 
 x-s3-env: &s3-env
   S3_ACCESS_KEY: ${S3_ACCESS_KEY:-fleets3}
   S3_SECRET_KEY: ${S3_SECRET_KEY:-fleets3_dev_secret}
+
+# Spring Boot services expose /actuator/health; the JRE image has bash but no curl.
+x-java-health: &java-health
+  interval: 10s
+  timeout: 5s
+  retries: 30
+  start_period: 20s
+
+x-java-build: &java-build
+  context: .
+  dockerfile: services/Dockerfile.java
+
+x-db-env: &db-env
+  POSTGRES_URL: jdbc:postgresql://postgres:5432/fleet
+  SERVICE_DB_PASSWORD: ${SERVICE_DB_PASSWORD:-fleet_service_dev}
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse_dev}
+  KAFKA_BOOTSTRAP: kafka:9092
+
+x-ml-env: &ml-env
+  CLICKHOUSE_HOST: clickhouse
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse_dev}
+  POSTGRES_DSN: postgresql://fleet_service:${SERVICE_DB_PASSWORD:-fleet_service_dev}@postgres:5432/fleet
+  MODEL_DIR: /models
 
 services:
   # ---------------------------------------------------------------- messaging
@@ -28,12 +60,28 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
       KAFKA_NUM_PARTITIONS: 24
       KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
+      # The image defaults to /tmp, outside the volume: data would vanish with the container.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_NUM_RECOVERY_THREADS_PER_DATA_DIR: 4
     volumes: [kafka-data:/var/lib/kafka/data]
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      # One Kafka ApiVersions request from bash, checking the reply's correlation id and error code:
+      # proves the broker serves requests, in milliseconds. A JVM-based probe (kafka-broker-api-versions.sh)
+      # takes 20-30 s just to start on a busy laptop and timed out while the broker was fine.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9092
+          && printf '\000\000\000\014\000\022\000\000\000\000\000\001\000\002hc' >&3
+          && timeout 5 head -c 10 <&3 | od -An -tx1 | tr -d ' \n' | grep -qx '[0-9a-f]\{8\}000000010000'
       interval: 10s
       timeout: 10s
       retries: 12
+      # After an unclean shutdown the broker re-reads its logs before serving: minutes, not seconds.
+      start_period: 10m
+      start_interval: 5s
     deploy: { resources: { limits: { memory: 1g } } }
 
   kafka-init:
@@ -168,8 +216,182 @@ services:
         aws --endpoint-url http://objectstore:8333 s3 ls
     restart: "no"
 
+  # ---------------------------------------------------------------- pipeline
+  ingest-gateway:
+    build: { <<: *java-build, args: { SERVICE: ingest-gateway } }
+    image: fleetpulse/ingest-gateway
+    ports: ["8081:8081"]
+    environment: { KAFKA_BOOTSTRAP: kafka:9092 }
+    depends_on: { kafka-init: { condition: service_completed_successfully } }
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8081 && printf 'GET /actuator/health HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '^{\"status\":\"UP\"' <&3"]
+    restart: unless-stopped
+    deploy: { resources: { limits: { memory: 512m } } }
+
+  normalizer:
+    build: { <<: *java-build, args: { SERVICE: normalizer } }
+    image: fleetpulse/normalizer
+    ports: ["8082:8082"]
+    # 24 partitions of telemetry.raw; two threads could not keep up with 100K vehicles on a 12-CPU laptop.
+    # Half the limit for the heap: RocksDB (the dedup window) lives outside it. At 70% it was OOM-killed.
+    environment: { KAFKA_BOOTSTRAP: kafka:9092, STREAM_THREADS: "${NORMALIZER_THREADS:-6}",
+                   JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=50 -XX:+ExitOnOutOfMemoryError" }
+    volumes: [normalizer-state:/state]
+    depends_on: { kafka-init: { condition: service_completed_successfully } }
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8082 && printf 'GET /actuator/health HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '^{\"status\":\"UP\"' <&3"]
+    restart: unless-stopped
+    deploy: { resources: { limits: { memory: 1536m } } }
+
+  stream-processor:
+    build: { <<: *java-build, args: { SERVICE: stream-processor } }
+    image: fleetpulse/stream-processor
+    ports: ["8083:8083"]
+    environment:
+      <<: *db-env
+      REDIS_URL: redis://redis:6379
+      STREAM_THREADS: ${PROCESSOR_THREADS:-4}
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=50 -XX:+ExitOnOutOfMemoryError"
+    # RocksDB state survives restarts, so recovery replays only the changelog tail.
+    volumes: [stream-state:/state]
+    depends_on:
+      kafka-init: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      <<: *java-health
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8083 && printf 'GET /actuator/health HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '^{\"status\":\"UP\"' <&3"]
+    restart: unless-stopped
+    deploy: { resources: { limits: { memory: 1536m } } }
+
+  # Seeds 100K vehicles on first start (skipped afterwards), then streams live telemetry.
+  simulator:
+    build: { <<: *java-build, args: { SERVICE: simulator } }
+    image: fleetpulse/simulator
+    ports: ["8090:8090"]
+    environment:
+      <<: *db-env
+      SIM_MODES: seed,run
+      SIM_VEHICLES: ${SIM_VEHICLES:-100000}
+      SIM_INTERVAL_SECONDS: ${SIM_INTERVAL_SECONDS:-30}
+      GATEWAY_URL: http://ingest-gateway:8081
+    depends_on:
+      ingest-gateway: { condition: service_healthy }
+      normalizer: { condition: service_healthy }
+      stream-processor: { condition: service_healthy }
+    restart: unless-stopped
+    deploy: { resources: { limits: { memory: 1536m } } }
+
+  # 21 days of history straight into ClickHouse, plus breakdown labels for the model. Once.
+  backfill:
+    image: fleetpulse/simulator
+    profiles: [setup]
+    environment:
+      <<: *db-env
+      SIM_MODES: seed,backfill
+      SIM_BACKFILL_DAYS: ${SIM_BACKFILL_DAYS:-21}
+      SIM_BACKFILL_THREADS: 2
+      PORT: 0
+    depends_on:
+      postgres: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+    deploy: { resources: { limits: { memory: 2560m } } }
+    restart: "no"
+
+  # ---------------------------------------------------------------- product
+  api:
+    build: services/api
+    image: fleetpulse/api
+    ports: ["8000:8000"]
+    # The image's probe starts a Python process: allow for a busy machine, where that alone took over 3 s.
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)"], interval: 10s, timeout: 15s, retries: 12, start_period: 30s }
+    environment:
+      API_POSTGRES_DSN: postgresql://fleet_app:${APP_DB_PASSWORD:-fleet_app_dev}@postgres:5432/fleet
+      API_REDIS_URL: redis://redis:6379/0
+      API_CLICKHOUSE_URL: http://clickhouse:8123
+      API_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_API_PASSWORD:-clickhouse_api_dev}
+      # Tokens carry the browser-facing issuer (KC_HOSTNAME); keys are fetched over the internal network.
+      API_OIDC_ISSUER: http://localhost:8080/realms/fleetpulse
+      API_OIDC_JWKS_URL: http://keycloak:8080/realms/fleetpulse/protocol/openid-connect/certs
+      API_CORS_ORIGINS: '["http://localhost:3000","http://localhost:5173"]'
+      API_SIMULATOR_URL: http://simulator:8090
+      API_NORMALIZER_URL: http://normalizer:8082
+      API_KAFKA_BOOTSTRAP: kafka:9092
+      API_DEMO_CONTROLS: ${DEMO_CONTROLS:-true}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LOG_LEVEL: warning
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+    restart: unless-stopped
+    deploy: { resources: { limits: { memory: 512m } } }
+
+  web:
+    build: web
+    image: fleetpulse/web
+    ports: ["3000:8080"]
+    depends_on: { api: { condition: service_healthy } }
+    restart: unless-stopped
+    deploy: { resources: { limits: { memory: 64m } } }
+
+  # Feed-drift check every two minutes (see ADR 0004).
+  drift:
+    build: services/ml
+    image: fleetpulse/ml
+    command: ["fleetpulse-drift", "--watch", "120"]
+    environment: *ml-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+    restart: on-failure
+    deploy: { resources: { limits: { memory: 768m } } }
+
+  # One-off model jobs:  docker compose --profile jobs run --rm ml fleetpulse-train | fleetpulse-score | fleetpulse-evaluate
+  ml:
+    image: fleetpulse/ml
+    profiles: [jobs]
+    environment: *ml-env
+    volumes: [ml-models:/models]
+    depends_on:
+      postgres: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+    deploy: { resources: { limits: { memory: 3g } } }
+
+  # ---------------------------------------------------------------- data viewers (profile: tools)
+  kafka-ui:
+    image: kafbat/kafka-ui:v1.3.0
+    profiles: [tools]
+    ports: ["8085:8080"]
+    environment:
+      KAFKA_CLUSTERS_0_NAME: fleetpulse
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "false"
+    depends_on: { kafka: { condition: service_healthy } }
+    deploy: { resources: { limits: { memory: 512m } } }
+
+  adminer:
+    image: adminer:4.8.1
+    profiles: [tools]
+    ports: ["8086:8080"]
+    environment: { ADMINER_DEFAULT_SERVER: postgres }
+    deploy: { resources: { limits: { memory: 128m } } }
+
+  redisinsight:
+    image: redis/redisinsight:2.60
+    profiles: [tools]
+    ports: ["5540:5540"]
+    deploy: { resources: { limits: { memory: 384m } } }
+
 volumes:
   kafka-data:
   pg-data:
   ch-data:
   object-data:
+  normalizer-state:
+  stream-state:
+  ml-models:

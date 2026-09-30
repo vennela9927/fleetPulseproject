@@ -3,7 +3,7 @@
 A firmware update can change a feed without breaking it: speed in mph still labelled km/h passes
 every validation rule and raises no alert, but it quietly skews trip distances, harsh-driving
 rates and the failure model's inputs. This job compares each maker's last few minutes with its
-previous hours, field by field, using the population stability index (PSI), and records the
+previous 40 minutes (when that history is continuous), field by field, using the population stability index (PSI), and records the
 result for the Vehicle makers page. Conventional reading: under 0.1 stable, 0.1-0.25 watch,
 above 0.25 drifted.
 
@@ -55,7 +55,11 @@ def hint(field: str, before: float, after: float, fleet_ratio: float = 1.0) -> s
     return None
 
 
-def check(cfg: data.Config, baseline_hours: int = 6, current_minutes: int = 10) -> pd.DataFrame:
+def check(cfg: data.Config, baseline_minutes: int = 60, current_minutes: int = 10) -> pd.DataFrame:
+    """Each maker's last ``current_minutes`` against its own recent past: from ``baseline_minutes``
+    ago up to twice the current window ago. A maker is judged only when its baseline is continuous
+    (data in at least 90% of its minutes): after a restart or an outage the check says nothing rather
+    than comparing against a gap. A long baseline spanning restarts raised false alarms."""
     client = clickhouse_connect.get_client(host=cfg.clickhouse_host, port=cfg.clickhouse_port,
                                            username=cfg.clickhouse_user, password=cfg.clickhouse_password)
     cols = ", ".join(FIELDS)
@@ -65,11 +69,18 @@ def check(cfg: data.Config, baseline_hours: int = 6, current_minutes: int = 10) 
         WHERE ts >= now() - INTERVAL {{start:UInt32}} SECOND AND ts < now() - INTERVAL {{end:UInt32}} SECOND
           AND cityHash64(vin, seq) % {{mod:UInt32}} = 0"""  # noqa: S608  column list is the FIELDS constant
     settings = {"max_threads": 2}
-    base = client.query_df(sql, parameters={"start": baseline_hours * 3600, "end": 2 * current_minutes * 60,
-                                            "mod": 50}, settings=settings)
+    window = {"start": baseline_minutes * 60, "end": 2 * current_minutes * 60}
+    base = client.query_df(sql, parameters={**window, "mod": 20}, settings=settings)
     cur = client.query_df(sql, parameters={"start": current_minutes * 60, "end": 0, "mod": 5}, settings=settings)
+    covered = dict(client.query("""
+        SELECT oem, uniqExact(toStartOfMinute(ts)) FROM fleet.telemetry
+        WHERE ts >= now() - INTERVAL {start:UInt32} SECOND AND ts < now() - INTERVAL {end:UInt32} SECOND
+        GROUP BY oem""", parameters=window, settings=settings).result_rows)
+    need = 0.9 * (window["start"] - window["end"]) / 60
     rows = []
-    for oem in sorted(set(cur["oem"])):
+    if cur.empty or base.empty:  # traffic paused or just started: nothing to compare yet
+        return classify(pd.DataFrame(rows))
+    for oem in sorted(o for o in set(cur["oem"]) if covered.get(o, 0) >= need):
         b_oem, c_oem = base[base["oem"] == oem], cur[cur["oem"] == oem]
         for f in FIELDS:
             b, c = b_oem[f].dropna().to_numpy(float), c_oem[f].dropna().to_numpy(float)
@@ -123,8 +134,15 @@ def main() -> None:
     args = parser.parse_args()
     cfg = data.Config()
     while True:
-        result = check(cfg)
-        save(cfg, result)
+        try:
+            result = check(cfg)
+            save(cfg, result)
+        except Exception as e:  # a store restarting must not end the watch; the next check retries
+            if not args.watch:
+                raise
+            print(f"{datetime.now(UTC):%H:%M:%S} check failed, retrying in {args.watch}s: {e!r}", flush=True)
+            time.sleep(args.watch)
+            continue
         flagged = result[result["status"] != "OK"] if len(result) else result
         print(f"{datetime.now(UTC):%H:%M:%S} checked {len(result)} maker fields; "
               + ("; ".join(f"{r.oem_code} {r.field} PSI {r.psi} ({r.status})" for r in flagged.itertuples())

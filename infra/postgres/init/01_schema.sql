@@ -1,6 +1,6 @@
 -- FleetPulse relational core (PostgreSQL 16 + pgvector)
 -- Designed in Third Normal Form. Deliberate denormalisations are marked "DENORM" and
--- explained in docs/adr/ADR-003-polyglot-persistence.md.
+-- explained in docs/adr/0005-polyglot-persistence.md.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;

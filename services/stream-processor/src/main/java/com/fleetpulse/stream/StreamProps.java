@@ -5,6 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * @param clickhouseBatchRows a partition's batch is written once it holds this many events
  * @param clickhouseFlushMs   ...or once it is this old, which bounds how stale ClickHouse is
+ * @param clickhouseSinks     ClickHouse sink consumers, splitting the partitions and inserting in parallel
  */
 @ConfigurationProperties(prefix = "stream")
 public record StreamProps(
@@ -17,5 +18,6 @@ public record StreamProps(
         String clickhouseUser,
         String clickhousePassword,
         int clickhouseBatchRows,
-        long clickhouseFlushMs) {
+        long clickhouseFlushMs,
+        int clickhouseSinks) {
 }

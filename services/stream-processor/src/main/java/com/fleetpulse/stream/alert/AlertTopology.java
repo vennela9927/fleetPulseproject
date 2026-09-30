@@ -13,6 +13,8 @@ import org.apache.kafka.streams.state.Stores;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Map;
+
 /**
  * <pre>
  *  telemetry.canonical ──► detect (per-vehicle rule state) ──► alerts
@@ -29,12 +31,20 @@ public final class AlertTopology {
 
     private AlertTopology() {}
 
+    /** Changelog compacted soon after writes, so rebuilding a thread's state reads about the state's
+     *  size, not every update since the start. A full replay stalled threads long enough to be fenced,
+     *  which triggered another rebuild: a rebalance storm under load. */
+    static final Map<String, String> COMPACT_CHANGELOG = Map.of(
+            "segment.bytes", String.valueOf(32 * 1024 * 1024), "segment.ms", "600000",
+            "min.cleanable.dirty.ratio", "0.1");
+
     public static Topology build(RuleEngine engine, MeterRegistry metrics) {
         Topology t = new Topology();
         t.addSource("canonical", Serdes.String().deserializer(), Serdes.ByteArray().deserializer(), CANONICAL);
         t.addProcessor("detect", () -> new Detect(engine, metrics), "canonical");
         t.addStateStore(Stores.keyValueStoreBuilder(
-                Stores.persistentKeyValueStore(STATE_STORE), Serdes.String(), Serdes.ByteArray()), "detect");
+                Stores.persistentKeyValueStore(STATE_STORE), Serdes.String(), Serdes.ByteArray())
+                .withLoggingEnabled(COMPACT_CHANGELOG), "detect");
         t.addSink("alerts", ALERTS, Serdes.String().serializer(), Serdes.ByteArray().serializer(), "detect");
         return t;
     }

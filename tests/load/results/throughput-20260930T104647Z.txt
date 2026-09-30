@@ -1,0 +1,17 @@
+== 1. Kafka broker capacity (kafka-producer-perf-test, 2,000,000 x 400 B, acks=all, 24 partitions)
+2000000 records sent, 40870.542556 records/sec (15.59 MB/sec), 1317.61 ms avg latency, 5211.00 ms max latency, 1251 ms 50th, 2588 ms 95th, 3081 ms 99th, 3629 ms 99.9th.
+
+== 2. End to end: 100000 vehicles every 30s, burst x3 => target 10000 events/s, for 120s
+t(s)      generated/s       stored/s      backlog
+12              14501          10004        53957
+25               8719           6264        85872
+38              10664           6225       143578
+52               9715           8686       157982
+65               9997          10441       152211
+78               9847           9125       161590
+91              10462           8436       187938
+104              9844           7368       220123
+116              9776          10510       211316
+129              3280           9619       128911
+average: generated 9560/s, stored 8710/s over 131s
+report: tests/load/results/throughput-20260930T104647Z.txt

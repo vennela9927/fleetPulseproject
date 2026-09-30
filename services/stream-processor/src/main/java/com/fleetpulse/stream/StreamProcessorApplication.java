@@ -62,7 +62,7 @@ public class StreamProcessorApplication implements CommandLineRunner, HealthIndi
     private final Set<String> failed = ConcurrentHashMap.newKeySet();
     private VehicleDirectory vehicles;
     private KafkaStreams streams;
-    private ClickHouseSink clickhouse;
+    private final List<ClickHouseSink> clickhouse = new ArrayList<>();
 
     public StreamProcessorApplication(JdbcTemplate db, MeterRegistry metrics, StreamProps props) {
         this.db = db;
@@ -91,10 +91,17 @@ public class StreamProcessorApplication implements CommandLineRunner, HealthIndi
         streams.start();
 
         start("alert-sink", new AlertSink(props.kafkaBootstrap(), db, vehicles, props.redisUrl(), metrics, clock));
+        // One live-state consumer: Redis runs commands on one thread, and four pipelining consumers
+        // overloaded it (30 s timeouts). The ClickHouse sink is different: one consumer did one ~1 s
+        // insert at a time and fell behind, so several split the partitions and insert in parallel.
+        // Batches are per partition (ADR 0001), so exactly-once holds whichever consumer owns one.
         start("live-state-sink", new LiveStateSink(props.kafkaBootstrap(), props.redisUrl(), vehicles, metrics));
-        clickhouse = new ClickHouseSink(props.kafkaBootstrap(), props.clickhouseUrl(), props.clickhouseUser(),
-                props.clickhousePassword(), vehicles, metrics, props.clickhouseBatchRows(), props.clickhouseFlushMs());
-        start("clickhouse-sink", clickhouse);
+        for (int i = 0; i < Math.max(1, props.clickhouseSinks()); i++) {
+            ClickHouseSink sink = new ClickHouseSink(props.kafkaBootstrap(), props.clickhouseUrl(), props.clickhouseUser(),
+                    props.clickhousePassword(), vehicles, metrics, props.clickhouseBatchRows(), props.clickhouseFlushMs());
+            clickhouse.add(sink);
+            start("clickhouse-sink-" + i, sink);
+        }
         log.info("stream processor started: {} vehicles known", vehicles.size());
     }
 
@@ -140,7 +147,7 @@ public class StreamProcessorApplication implements CommandLineRunner, HealthIndi
         Map<String, Object> s = new LinkedHashMap<>();
         s.put("alertDetector", streams == null ? "STARTING" : streams.state().name());
         s.put("vehiclesKnown", vehicles == null ? 0 : vehicles.size());
-        s.put("clickhouseSink", clickhouse == null ? Map.of() : clickhouse.status());
+        s.put("clickhouseSink", clickhouse.stream().map(ClickHouseSink::status).toList());
         s.put("failedWorkers", failed);
         return s;
     }

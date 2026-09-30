@@ -4,7 +4,8 @@ import sys
 import httpx
 import pytest
 
-KEYCLOAK_TOKEN_URL = "http://localhost:8080/realms/fleetpulse/protocol/openid-connect/token"
+# 127.0.0.1, not localhost: on Windows the IPv6 attempt first costs seconds. The issuer is pinned by KC_HOSTNAME.
+KEYCLOAK_TOKEN_URL = "http://127.0.0.1:8080/realms/fleetpulse/protocol/openid-connect/token"
 USERS = {
     "acme": ("acme.manager", "acme-demo-2026"),
     "acme_viewer": ("acme.viewer", "acme-view-2026"),
@@ -23,7 +24,7 @@ def pytest_asyncio_loop_factories(config, item):
 
 def _stack_is_up() -> bool:
     try:
-        return httpx.get("http://localhost:8080/realms/fleetpulse", timeout=2).status_code == 200
+        return httpx.get("http://127.0.0.1:8080/realms/fleetpulse", timeout=20).status_code == 200
     except httpx.HTTPError:
         return False
 
@@ -42,7 +43,7 @@ def tokens() -> dict[str, str]:
     out = {}
     for name, (username, password) in USERS.items():
         resp = httpx.post(KEYCLOAK_TOKEN_URL, data={"grant_type": "password", "client_id": "fleetpulse-cli",
-                                                    "username": username, "password": password}, timeout=10)
+                                                    "username": username, "password": password}, timeout=30)
         resp.raise_for_status()
         out[name] = resp.json()["access_token"]
     return out

@@ -24,8 +24,10 @@ held back for 30 minutes. A real overheat climbs smoothly and is unaffected (uni
 and a spread of isolated odd readings that must not trigger it).
 
 **Feed drift per maker (batch job, `fleetpulse-drift`).** Each maker's last 10 minutes are compared
-with its previous hours, field by field, with the population stability index (PSI). Time of day, a
-depot outage or a simulator restart move every maker together, so a maker is flagged only when its
+with its previous 40 minutes, field by field, with the population stability index (PSI). A maker is
+judged only when that history is continuous (data in at least 90% of its minutes), so after a
+restart or an outage the check stays silent for up to an hour instead of comparing against a gap.
+Time of day or a depot outage move every maker together, so a maker is flagged only when its
 PSI exceeds the median of the other makers by more than 0.25. The same relative view names likely
 causes: a mean at about 0.62 times the fleet's own change looks like mph sent as km/h. Results go to
 `feed_drift` and the Vehicle makers page.
@@ -44,7 +46,10 @@ today's fleet: recalibrate or retrain.
   read it as "looks like mph sent as km/h", while the other makers' speed, which had also shifted
   after a simulator restart, was read as "every maker shifted together". Before the bug, and
   before the relative rule, every maker was flagged after the restart: the rule was changed because
-  of that false alarm.
+  of that false alarm. The relative rule was not enough on its own: with a 6-hour baseline spanning
+  several restarts and a backlog, Borealis and Draco rpm and battery voltage were flagged with no
+  bug injected (makers shift differently after a restart: EVs, diesel trucks). The baseline was
+  shortened to 40 minutes and a maker with a gap in it is no longer judged.
 - **Workshop feedback:** 66 inspections with ground truth from the simulator found faults in 86%,
   against 96% promised (range 91-100%): below expected. Most were scored at the 99% cap, while the
   test set's top bucket came true 94% of the time. The loop caught the cap as overconfident, which is

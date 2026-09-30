@@ -1,0 +1,42 @@
+19:42:10 broker-kill test: broker down for 30s
+19:43:00 before: sent=1723200 stored=1148445
+19:43:00 docker kill fleetpulse-kafka-1 (SIGKILL, no clean shutdown)
+19:43:40 during outage: sent=1780400 (the simulator keeps generating; the gateway refuses and it retries)
+19:43:42 broker restarted; waiting for it to be healthy
+19:49:01 broker healthy after 352s from the kill
+19:54:45 pausing new traffic to reconcile
+02:57:21 settling: sent=1945200 stored=1348238 diff=596962
+02:57:41 settling: sent=1945200 stored=1348238 diff=596962
+02:58:03 settling: sent=1945200 stored=1348238 diff=596962
+02:58:20 settling: sent=1945200 stored=1348238 diff=596962
+02:58:40 settling: sent=1945200 stored=1348238 diff=596962
+02:58:56 settling: sent=1945200 stored=1348238 diff=596962
+02:59:10 settling: sent=1945200 stored=1348238 diff=596962
+02:59:27 settling: sent=1945200 stored=1348238 diff=596962
+02:59:45 settling: sent=1945200 stored=1348238 diff=596962
+03:00:03 settling: sent=1945200 stored=1348238 diff=596962
+03:00:19 settling: sent=1945200 stored=1348238 diff=596962
+03:00:33 settling: sent=1945200 stored=1348238 diff=596962
+03:00:49 settling: sent=1945200 stored=1348238 diff=596962
+03:01:04 settling: sent=1945200 stored=1348238 diff=596962
+03:01:18 settling: sent=1945200 stored=1348238 diff=596962
+03:01:32 settling: sent=1945200 stored=1348238 diff=596962
+03:01:46 settling: sent=1945200 stored=1348238 diff=596962
+03:02:01 settling: sent=1945200 stored=1348238 diff=596962
+03:02:15 settling: sent=1945200 stored=1348238 diff=596962
+03:02:29 settling: sent=1945200 stored=1348238 diff=596962
+03:02:43 settling: sent=1945200 stored=1348238 diff=596962
+03:02:57 settling: sent=1945200 stored=1348238 diff=596962
+03:03:11 settling: sent=1945200 stored=1348238 diff=596962
+03:03:27 settling: sent=1945200 stored=1348238 diff=596962
+03:03:40 settling: sent=1945200 stored=1348238 diff=596962
+03:03:55 settling: sent=1945200 stored=1364242 diff=580958
+03:04:10 settling: sent=1945200 stored=1411865 diff=533335
+03:04:25 settling: sent=1945200 stored=1487860 diff=457340
+03:04:41 settling: sent=1945200 stored=1545730 diff=399470
+03:04:56 settling: sent=1945200 stored=1605040 diff=340160
+03:05:11 settling: sent=1945200 stored=1672546 diff=272654
+03:05:25 settling: sent=1945200 stored=1728174 diff=217026
+03:05:40 settling: sent=1945200 stored=1796526 diff=148674
+03:05:53 settling: sent=1945200 stored=1872927 diff=72273
+03:06:09 settling: sent=1945200 stored=1945200 diff=0

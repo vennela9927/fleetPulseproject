@@ -1,0 +1,14 @@
+# Google Cloud (GKE). Same images, same templates: only endpoints and classes differ.
+image:
+  registry: asia-south1-docker.pkg.dev/fleetpulse-prod/fleetpulse
+external:
+  kafkaBootstrap: bootstrap.fleetpulse.asia-south1.managedkafka.fleetpulse-prod.cloud.goog:9092
+  postgres: { host: 10.20.0.3 }          # Cloud SQL private IP
+  clickhouseUrl: https://abc123.asia-south1.gcp.clickhouse.cloud:8443
+  redisUrl: redis://10.20.0.4:6379        # Memorystore
+  oidcIssuer: https://auth.fleetpulse.example.com/realms/fleetpulse
+  oidcJwksUrl: https://auth.fleetpulse.example.com/realms/fleetpulse/protocol/openid-connect/certs
+ingress:
+  className: gce
+jobs:
+  modelStorage: { storageClass: standard-rwo }

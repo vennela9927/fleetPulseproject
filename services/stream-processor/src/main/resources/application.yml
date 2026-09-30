@@ -24,6 +24,7 @@ stream:
   clickhouse-password: ${CLICKHOUSE_PASSWORD:clickhouse_dev}
   clickhouse-batch-rows: ${CLICKHOUSE_BATCH_ROWS:50000}
   clickhouse-flush-ms: ${CLICKHOUSE_FLUSH_MS:5000}
+  clickhouse-sinks: ${CLICKHOUSE_SINKS:4}
 
 management:
   endpoints:

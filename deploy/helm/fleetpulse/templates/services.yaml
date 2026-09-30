@@ -1,0 +1,89 @@
+{{- range $name, $svc := .Values.services }}
+{{- $probe := ternary "/healthz" "/actuator/health" (eq $name "api") }}
+{{- $probe = ternary "/" $probe (eq $name "web") }}
+---
+apiVersion: apps/v1
+kind: {{ ternary "StatefulSet" "Deployment" (default false $svc.stateful) }}
+metadata:
+  name: {{ $name }}
+  labels: {{- include "fleetpulse.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $name }}
+spec:
+  {{- if not $svc.autoscale }}
+  replicas: {{ $svc.replicas }}
+  {{- end }}
+  {{- if $svc.stateful }}
+  serviceName: {{ $name }}
+  {{- end }}
+  selector: { matchLabels: { app.kubernetes.io/name: {{ $name }} } }
+  template:
+    metadata:
+      labels: {{- include "fleetpulse.labels" $ | nindent 8 }}
+        app.kubernetes.io/name: {{ $name }}
+    spec:
+      {{- include "fleetpulse.podSecurity" $ | nindent 6 }}
+      # Spread replicas across zones so losing one zone keeps the service up.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app.kubernetes.io/name: {{ $name }} } }
+      containers:
+        - name: {{ $name }}
+          image: {{ include "fleetpulse.image" (dict "root" $ "name" $name) }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports: [{ containerPort: {{ $svc.port }} }]
+          env:
+            - { name: PORT, value: {{ $svc.port | quote }} }
+            {{- include "fleetpulse.env" (dict "root" $ "name" $name) | nindent 12 }}
+          resources: {{- toYaml $svc.resources | nindent 12 }}
+          readinessProbe: { httpGet: { path: {{ $probe }}, port: {{ $svc.port }} }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: {{ $probe }}, port: {{ $svc.port }} }, periodSeconds: 10, failureThreshold: 6, initialDelaySeconds: 30 }
+          {{- include "fleetpulse.containerSecurity" $ | nindent 10 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            {{- if $svc.stateful }}
+            - { name: state, mountPath: /state }
+            {{- end }}
+            {{- if eq $name "web" }}
+            - { name: tmp, mountPath: /var/cache/nginx }
+            {{- end }}
+      volumes:
+        - { name: tmp, emptyDir: {} }
+  {{- if $svc.stateful }}
+  volumeClaimTemplates:
+    - metadata: { name: state }
+      spec: { accessModes: [ReadWriteOnce], resources: { requests: { storage: 5Gi } } }
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "fleetpulse.labels" $ | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: {{ $name }} }
+  ports: [{ port: {{ $svc.port }}, targetPort: {{ $svc.port }} }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app.kubernetes.io/name: {{ $name }} } }
+{{- if $svc.autoscale }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: {{ $name }} }
+  minReplicas: {{ $svc.autoscale.min }}
+  maxReplicas: {{ $svc.autoscale.max }}
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: {{ $svc.autoscale.cpu }} } }
+{{- end }}
+{{- end }}
