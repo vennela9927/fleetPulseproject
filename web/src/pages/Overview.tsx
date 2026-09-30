@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api, type LiveMap as LiveMapData, type Summary } from '../api'
 import { AlertFeed } from '../components/AlertFeed'
+import { FleetHealth } from '../components/FleetHealth'
 import { IconCritical, IconWarning } from '../components/icons'
 import { LiveMap } from '../components/LiveMap'
 import { count } from '../format'
@@ -55,6 +56,7 @@ export function Overview() {
               icon={<IconWarning style={{ width: 13, height: 13, color: 'var(--status-warning)' }} />} sub="open" />
       </div>
       {summary.isError && <div className="card error-box" style={{ marginBottom: 16 }}>Live data is unavailable right now. Retrying…</div>}
+      <FleetHealth criticalAlerts={s?.open_alerts.CRITICAL ?? 0} />
       <div className="grid-2">
         <LiveMap data={live.data} loading={live.isLoading} failed={live.isError}
                  onOpen={(vin) => navigate(`/vehicles/by-vin/${vin}`)} />

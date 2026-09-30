@@ -76,6 +76,59 @@ function Rich({ text }: { text: string }) {
   return <>{blocks}</>
 }
 
+interface AuditRow {
+  id: number
+  ts: string
+  actor_type: 'USER' | 'AGENT' | 'SERVICE'
+  actor: string | null
+  action: string
+  details: Record<string, unknown>
+  row_hash: string
+  prev_hash: string | null
+}
+
+const AUDIT_LABEL: Record<string, string> = {
+  'agent.propose': 'proposed it (cannot book anything itself)',
+  'agent.approve': 'approved it; the booking was made',
+  'agent.reject': 'rejected it; nothing was booked',
+  'agent.approve_failed': 'approved it, but it no longer fitted; nothing was booked',
+}
+
+/** The proposal's rows in the hash-chained audit log: the copilot proposing, a person deciding. */
+function AuditTrail({ actionId }: { actionId: number }) {
+  const q = useQuery({
+    queryKey: ['copilot-audit', actionId],
+    queryFn: () => api<{ items: AuditRow[] }>(`/v1/copilot/actions/${actionId}/audit`),
+  })
+  if (q.isLoading) return <div className="muted" style={{ fontSize: 12 }}>Loading the audit trail…</div>
+  if (q.isError) return <div className="muted" style={{ fontSize: 12 }}>The audit trail is unavailable.</div>
+  return (
+    <ol style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5 }}>
+      {q.data!.items.map((r) => (
+        <li key={r.id} style={{ margin: '3px 0' }}>
+          <span className="num">{dateTime(r.ts)}</span> · <strong>{r.actor_type === 'AGENT' ? 'Copilot (AI)' : r.actor ?? 'a user'}</strong>{' '}
+          {AUDIT_LABEL[r.action] ?? r.action}
+          <div className="muted mono" style={{ fontSize: 11 }} title="This row's hash covers its content and the previous row's hash">
+            #{r.id} · hash {r.row_hash.slice(0, 12)} · previous {r.prev_hash ? r.prev_hash.slice(0, 12) : 'none'}
+          </div>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+function AuditToggle({ actionId, version }: { actionId: number; version: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={{ marginTop: 6 }}>
+      <button type="button" className="btn small" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? 'Hide audit trail' : 'Audit trail'}
+      </button>
+      {open && <AuditTrail key={version} actionId={actionId} />}
+    </div>
+  )
+}
+
 function ProposalCard({ p, onDecided }: { p: Proposal; onDecided: () => void }) {
   const manager = hasRole('fleet_manager')
   const [state, setState] = useState<string>(p.status)
@@ -122,6 +175,7 @@ function ProposalCard({ p, onDecided }: { p: Proposal; onDecided: () => void }) 
       {state === 'EXECUTED' && <div style={{ fontSize: 12.5, color: 'var(--success-text)' }}>{outcome ?? 'Booked.'} The copilot proposed it; you approved it.</div>}
       {state === 'FAILED' && <div style={{ fontSize: 12.5 }}>Not booked: {outcome}</div>}
       {error && <div style={{ fontSize: 12.5 }}>{error}</div>}
+      <AuditToggle actionId={p.action_id} version={state} />
     </div>
   )
 }
@@ -137,6 +191,11 @@ export function Copilot() {
     queryKey: ['copilot-actions'],
     queryFn: () => api<{ items: Action[] }>('/v1/copilot/actions?status=PROPOSED'),
     refetchInterval: 15_000,
+  })
+  const approved = useQuery({
+    queryKey: ['copilot-actions', 'EXECUTED'],
+    queryFn: () => api<{ items: (Action & { decided_at: string | null; decided_by_email: string | null })[] }>(
+      '/v1/copilot/actions?status=EXECUTED'),
   })
   const refreshActions = () => void qc.invalidateQueries({ queryKey: ['copilot-actions'] })
 
@@ -239,6 +298,25 @@ export function Copilot() {
                       <div className="muted" style={{ fontSize: 12 }}>{a.arguments.reason} · {relTime(a.created_at)}</div>
                     </>
                   )}
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="card-head" style={{ borderTop: '1px solid var(--border)' }}><h2>Recently approved</h2></div>
+          {!approved.data?.items.length ? (
+            <div className="empty">{approved.isLoading ? 'Loading…' : 'Nothing approved yet.'}</div>
+          ) : (
+            <ul className="feed">
+              {approved.data.items.slice(0, 5).map((a) => (
+                <li key={a.id}>
+                  <strong>{a.tool === 'book_service_plan' ? 'Service plan' : 'Service booking'}</strong>
+                  <div className="secondary" style={{ fontSize: 12.5 }}>
+                    {a.tool === 'book_service_plan' ? a.rationale : <><span className="mono">{a.arguments.vin}</span> · {a.arguments.depot}</>}
+                  </div>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    Proposed by the copilot, approved by {a.decided_by_email ?? 'a manager'}{a.decided_at ? ` ${relTime(a.decided_at)}` : ''}
+                  </div>
+                  <AuditToggle actionId={a.id} version="EXECUTED" />
                 </li>
               ))}
             </ul>

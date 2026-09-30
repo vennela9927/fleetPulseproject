@@ -86,6 +86,23 @@ async def list_actions(request: Request, user: CurrentUser, _: RateLimited,
     return {"items": rows}
 
 
+@router.get("/actions/{action_id}/audit")
+async def action_audit(action_id: int, request: Request, user: CurrentUser, _: RateLimited) -> dict[str, Any]:
+    """Who did what to this proposal, from the hash-chained audit log: the copilot proposing it, then
+    the person who approved or rejected it. Each row carries its hash and the previous row's, so an
+    edited or deleted row breaks the chain (checked in full by /v1/audit/verify)."""
+    async with tenant_tx(request.app.state.pg, user) as conn:
+        if await (await conn.execute("SELECT 1 FROM agent_action WHERE id = %s", (action_id,))).fetchone() is None:
+            raise not_found("proposal")
+        rows = await (await conn.execute("""
+            SELECT l.id, l.ts, l.actor_type, CASE WHEN l.actor_type = 'AGENT' THEN 'copilot' ELSE u.email END AS actor,
+                   l.action, l.details, encode(l.row_hash, 'hex') AS row_hash, encode(l.prev_hash, 'hex') AS prev_hash
+            FROM audit_log l LEFT JOIN app_user u ON u.id::text = l.actor_id
+            WHERE l.resource_type = 'agent_action' AND l.resource_id = %s ORDER BY l.id""",
+            (str(action_id),))).fetchall()
+    return {"items": rows}
+
+
 async def _decide(request: Request, user: Manager, action_id: int, approve: bool) -> dict[str, Any]:
     async with tenant_tx(request.app.state.pg, user) as conn:
         await ensure_user(conn, user)

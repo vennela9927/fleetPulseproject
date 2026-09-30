@@ -11,6 +11,7 @@ from ..auth import CurrentUser, Manager, Principal
 from ..db import ensure_user, tenant_tx
 from ..errors import ApiError
 from ..maintenance import (
+    URGENT_PROBABILITY,
     Candidate,
     Depot,
     first_plan_day,
@@ -122,6 +123,46 @@ async def get_plan(request: Request, user: CurrentUser, _: RateLimited,
     async with tenant_tx(request.app.state.pg, user) as conn:
         summary, _ = await load_plan(conn, inspection_cost, days)
     return summary
+
+
+@router.get("/overview")
+async def overview(request: Request, user: CurrentUser, _: RateLimited,
+                   inspection_cost: Annotated[float, Query(ge=10, le=2000)] = DEFAULT_INSPECTION_COST
+                   ) -> dict[str, Any]:
+    """The maintenance situation in one call, for the landing page: how many vehicles fall under each
+    of the plan's own rules, what is at stake, how full tomorrow's bays are, and what to do first."""
+    async with tenant_tx(request.app.state.pg, user) as conn:
+        bands = await (await conn.execute(f"""{_LATEST}
+            SELECT count(*) AS scored, max(r.scored_at) AS scored_at,
+                   count(*) FILTER (WHERE r.failure_prob_7d >= %(urgent)s) AS urgent,
+                   count(*) FILTER (WHERE r.failure_prob_7d < %(urgent)s
+                                    AND r.failure_prob_7d * r.est_cost_avoided_usd > %(cost)s) AS worth_inspecting,
+                   coalesce(sum(r.failure_prob_7d), 0) AS expected_breakdowns
+            FROM risk_score r WHERE (r.model_version, r.scored_at) = (SELECT version, latest FROM a)""",  # noqa: S608
+            {"urgent": URGENT_PROBABILITY, "cost": inspection_cost})).fetchone()
+        if not bands["scored"]:
+            return {"scored": 0}
+        plan_, _depots = await load_plan(conn, inspection_cost, 3)
+    tomorrow = [d["days"][0] for d in plan_["depots"]]
+    used = [t["already_booked"] + len(t["items"]) for t in tomorrow]
+    first_day = [b for t in tomorrow for b in t["items"]]
+    first_day.sort(key=lambda b: (-b["probability"], -b["expected_value_usd"]))
+    return {
+        "scored": bands["scored"],
+        "scored_at": bands["scored_at"],
+        "inspection_cost_usd": inspection_cost,
+        "bands": {"urgent": bands["urgent"], "worth_inspecting": bands["worth_inspecting"],
+                  "no_action": bands["scored"] - bands["urgent"] - bands["worth_inspecting"]},
+        "expected_breakdowns_7d": round(float(bands["expected_breakdowns"]), 1),
+        "plan": {**plan_["summary"], "days": len(plan_["days"])},
+        "tomorrow": {"date": plan_["days"][0], "inspections": len(first_day),
+                     "bays": sum(t["bays"] for t in tomorrow), "used": sum(used),
+                     "depots_full": sum(1 for u, t in zip(used, tomorrow, strict=True) if u >= t["bays"]),
+                     "depots": len(tomorrow),
+                     "moved_to_nearby_depot": sum(1 for b in first_day if b["moved_from"])},
+        "too_risky_to_wait": plan_["too_risky_to_wait"][:5],
+        "first_inspections": first_day[:5],
+    }
 
 
 class PlanItem(BaseModel):

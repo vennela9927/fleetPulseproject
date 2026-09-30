@@ -146,6 +146,13 @@ async def test_a_proposal_changes_nothing_until_a_manager_approves_it(rules_clie
     assert done.status_code == 200 and done.json()["status"] == "EXECUTED" and done.json()["booking_id"]
     assert (await rules_client.post(f"{url}/reject", headers=bearer(tokens["acme"]))).status_code == 409
 
+    # The audit trail: the copilot proposed, a person approved, each row chained to the one before.
+    trail = (await rules_client.get(f"{url}/audit", headers=bearer(tokens["acme_viewer"]))).json()["items"]
+    assert [(t["actor_type"], t["action"]) for t in trail] == [("AGENT", "agent.propose"), ("USER", "agent.approve")]
+    assert trail[0]["actor"] == "copilot" and trail[1]["actor"]
+    assert all(t["row_hash"] and t["prev_hash"] for t in trail)
+    assert (await rules_client.get(f"{url}/audit", headers=bearer(tokens["zenith"]))).status_code == 404
+
 
 @pytest.mark.integration
 async def test_a_rejected_proposal_books_nothing(rules_client, tokens):

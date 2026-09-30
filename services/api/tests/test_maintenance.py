@@ -119,6 +119,27 @@ async def test_the_plan_respects_bays_and_the_parts_add_up(client, tokens):
 
 
 @pytest.mark.integration
+async def test_the_overview_agrees_with_the_plan_and_stays_in_the_tenant(client, tokens):
+    o = (await client.get("/v1/maintenance/overview", headers=bearer(tokens["zenith"]))).json()
+    assert o["scored"] > 0
+    assert sum(o["bands"].values()) == o["scored"]
+    plan_ = (await client.get("/v1/maintenance/plan?days=3", headers=bearer(tokens["zenith"]))).json()
+    assert o["plan"]["scheduled"] == plan_["summary"]["scheduled"]
+    first_day = [b for d in plan_["depots"] for b in d["days"][0]["items"]]
+    assert o["tomorrow"]["inspections"] == len(first_day)
+    assert o["tomorrow"]["used"] <= o["tomorrow"]["bays"]
+    assert [b["probability"] for b in o["first_inspections"]] == sorted(
+        (b["probability"] for b in o["first_inspections"]), reverse=True)
+    # A higher inspection cost can only move vehicles out of "worth inspecting".
+    dearer = (await client.get("/v1/maintenance/overview?inspection_cost=600", headers=bearer(tokens["zenith"]))).json()
+    assert dearer["bands"]["worth_inspecting"] <= o["bands"]["worth_inspecting"]
+    # Another tenant's overview never lists these vehicles.
+    acme = (await client.get("/v1/maintenance/overview", headers=bearer(tokens["acme"]))).json()
+    zenith_ids = {b["vehicle_id"] for b in o["first_inspections"] + o["too_risky_to_wait"]}
+    assert not zenith_ids & {b["vehicle_id"] for b in acme["first_inspections"] + acme["too_risky_to_wait"]}
+
+
+@pytest.mark.integration
 async def test_booking_checks_role_tenant_and_double_booking(client, tokens):
     plan_ = (await client.get("/v1/maintenance/plan?days=3", headers=bearer(tokens["zenith"]))).json()
     item = next(b for d in plan_["depots"] for day in d["days"] for b in day["items"])
