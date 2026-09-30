@@ -206,6 +206,6 @@ and starts the whole stack.
    after recovery, with duplicates, invalid and out-of-order events rejected on purpose.
 2. **A new maker, live:** Draco's 2,000 trucks are parked as unknown; propose the mapping, preview
    it on the parked data, approve; the parked data is replayed and Draco appears on the map.
-3. **A breakdown avoided:** Fleet health → vehicle #4812 at 81% risk, likely part and reasons, about
-   $2,400 at stake → ask the copilot to book it → the manager approves → the audit trail shows the
-   copilot proposing and the manager approving.
+3. **A breakdown avoided:** Fleet health → the first vehicle in line (its risk, likely part, reasons
+   and the money at stake) → ask the copilot to book it → the manager approves → the audit trail
+   shows the copilot proposing and the manager approving.
