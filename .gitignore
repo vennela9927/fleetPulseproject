@@ -40,3 +40,6 @@ services/ml/models/
 *.tfstate
 *.tfstate.*
 .terraform.lock.hcl
+
+# Personal demo notes, kept locally only
+docs/demo-script.md
