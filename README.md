@@ -47,7 +47,9 @@ flowchart LR
 ```
 
 Why four stores, each for one access pattern: [ADR 0005](docs/adr/0005-polyglot-persistence.md).
-All decisions: [docs/adr](docs/adr).
+All decisions: [docs/adr](docs/adr). Diagrams as images: [system context](docs/diagrams/c4-context.png),
+[containers](docs/diagrams/c4-container.png), [deployment](docs/diagrams/deployment.png),
+[ER core](docs/diagrams/er-core.png) and [ER operations](docs/diagrams/er-ops.png).
 
 ## Run it
 
@@ -71,6 +73,28 @@ which needs more CPU than our laptop gives Docker.
 
 On a smaller machine: `SIM_VEHICLES=20000 docker compose up -d`.
 
+### Environment variables
+
+Every variable has a development default in `docker-compose.yml`, so the stack starts without a
+`.env` file. To override one, copy `.env.example` to `.env` and edit it (`.env` is git-ignored).
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `GEMINI_API_KEY` | empty | Gemini key for the copilot; empty uses the rule-based assistant |
+| `SIM_VEHICLES` | `100000` | Number of simulated vehicles |
+| `SIM_INTERVAL_SECONDS` | `30` | How often each vehicle reports (`10` is the 10K events/s design rate) |
+| `SIM_BACKFILL_DAYS` | `21` | Days of history the backfill writes |
+| `DEMO_CONTROLS` | `true` | Enables the Chaos page's fault injection, bursts and pause |
+| `NORMALIZER_THREADS`, `PROCESSOR_THREADS` | `6`, `4` | Kafka Streams threads per pipeline service |
+| `POSTGRES_PASSWORD`, `APP_DB_PASSWORD`, `SERVICE_DB_PASSWORD` | `*_dev` values | Postgres admin, API (row-level security) and pipeline roles |
+| `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_API_PASSWORD` | `*_dev` values | ClickHouse pipeline and read-only API users |
+| `KEYCLOAK_ADMIN_PASSWORD` | `keycloak_admin_dev` | Keycloak admin console |
+| `S3_ACCESS_KEY`, `S3_SECRET_KEY` | `fleets3`, dev secret | SeaweedFS (S3 API) for ClickHouse cold storage |
+| `API_*` | see `services/api/fleetpulse_api/config.py` | API settings, e.g. `API_RATE_LIMIT_PER_SECOND` (20), `API_RATE_LIMIT_BURST` (60) |
+
+The defaults are for local development only; in Kubernetes the values come from a secret
+(see [deploy/README.md](deploy/README.md)).
+
 ### History and the model (first run only)
 
 Live data starts immediately. The risk model needs history: 21 days for all vehicles, written
@@ -93,10 +117,26 @@ docker compose --profile jobs run --rm ml fleetpulse-score       # score every v
 | It works for a maker it never saw | Leaving each maker out of training: PR-AUC drops by at most 0.011 | ADR 0003 |
 | The copilot cannot act alone | It can only create proposals; approval needs the manager role; instructions planted in data were flagged and not followed in our tests | `services/api/tests/test_copilot.py` |
 
-Tests: Java (JUnit, Kafka Streams topology tests), API (unit and integration against the stack),
-ML (features, leakage, labels, evaluation, drift), web (Vitest). CI runs all of them, secret and
-dependency scans (gitleaks, Trivy), builds and scans every image, and starts the whole stack:
-[.github/workflows/ci.yml](.github/workflows/ci.yml).
+## Run the tests
+
+```bash
+mvn -B verify                                   # Java: JUnit and Kafka Streams topology tests, JaCoCo coverage
+(cd services/api && uv run pytest -q)           # API: unit tests; integration tests run when the stack is up
+(cd services/ml && uv run pytest -q)            # ML: features, leakage, labels, evaluation, drift
+(cd web && npm ci && npm test)                  # Web: Vitest
+
+# Need the running stack with live traffic; each writes a report under tests/*/results/
+tests/chaos/broker-kill.sh 30                   # hard-kill Kafka for 30 s, then check sent = stored = rollup
+tests/load/throughput.sh 3 120                  # Kafka benchmark, then a 3x burst for 120 s end to end
+uv run --project services/api python tests/load/api_latency.py 120 10   # API p50/p95/p99 under load
+```
+
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every push: the Java, API, ML and
+web suites with lint and type checks, secret and dependency scans (gitleaks, Trivy), a build and
+scan of every image, and a whole-stack start that checks telemetry reaches storage. The API
+integration tests need Keycloak and the databases, so CI runs the API unit tests only; the
+integration suite was run locally against the compose stack. The chaos and load scripts are run
+by hand.
 
 ## Deploy to a cloud
 
