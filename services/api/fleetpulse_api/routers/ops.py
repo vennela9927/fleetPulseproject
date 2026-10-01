@@ -49,10 +49,13 @@ async def pipeline(request: Request, user: CurrentUser,
     stats = await _simulator(request, "GET", "/admin/stats")
     sent: dict[str, int] = stats.get("ledgerByTenant", {}).get(user.tenant_id, {})
     # Sequence numbers restart above the run's start time, so seq > firstSeq is exactly this
-    # run's events; the ts bound only limits the scan.
+    # run's events; the ts bound only limits the scan. No FINAL: duplicates are removed before
+    # storage (normaliser dedup, exactly-once sink), so a plain count is the honest check (a
+    # duplicate would show as stored above sent), and FINAL over an hour-long run exceeded the
+    # API user's per-query memory limit.
     rows = await request.app.state.clickhouse.query(user, """
         SELECT oem, count() AS stored
-        FROM fleet.telemetry FINAL
+        FROM fleet.telemetry
         WHERE seq > {first_seq:UInt64} AND ts >= {started:DateTime} - INTERVAL 10 MINUTE
         GROUP BY oem""", {"first_seq": stats["firstSeq"], "started": stats["startedAt"][:19].replace("T", " ")})
     stored = {r["oem"]: int(r["stored"]) for r in rows}
