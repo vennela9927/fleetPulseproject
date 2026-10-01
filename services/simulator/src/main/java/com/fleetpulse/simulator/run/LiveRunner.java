@@ -220,6 +220,9 @@ public final class LiveRunner implements Runnable {
             VehicleSim v = fleet[i];
             if (tenant != null && !tenant.equals(tenants[i])) continue;
             if (v.model.oem().equals("DRACO") || !component.appliesTo(v.model.powertrain())) continue;
+            // Prefer vehicles on the road: a fault shows (and alerts) only while the engine runs, so a
+            // parked vehicle picked for the demo would stay silent. Fall back to any once few are left.
+            if (v.mode() != VehicleSim.Mode.DRIVING && attempts < count * 40) continue;
             v.inject(component, now, over);
             vins.add(v.vin);
         }
