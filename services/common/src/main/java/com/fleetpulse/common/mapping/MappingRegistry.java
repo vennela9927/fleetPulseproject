@@ -86,18 +86,28 @@ public final class MappingRegistry implements AutoCloseable {
         p.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, "read_committed");
         var loaded = new java.util.concurrent.CountDownLatch(1);
         thread = new Thread(() -> {
-            try (KafkaConsumer<String, String> c = new KafkaConsumer<>(p, new StringDeserializer(), new StringDeserializer())) {
-                List<TopicPartition> parts = c.partitionsFor(TOPIC, Duration.ofSeconds(30)).stream()
-                        .map(i -> new TopicPartition(TOPIC, i.partition())).toList();
-                c.assign(parts);
-                c.seekToBeginning(parts);
-                Map<TopicPartition, Long> end = c.endOffsets(parts);
-                while (running) {
-                    for (ConsumerRecord<String, String> r : c.poll(Duration.ofMillis(500))) apply(r.key(), r.value());
-                    if (loaded.getCount() > 0 && parts.stream().allMatch(tp -> c.position(tp) >= end.get(tp))) loaded.countDown();
+            // Retries until stopped: a service that starts before Kafka (a machine restart brings
+            // containers back in any order) must not run without mappings, parking every event.
+            while (running) {
+                try (KafkaConsumer<String, String> c = new KafkaConsumer<>(p, new StringDeserializer(), new StringDeserializer())) {
+                    List<TopicPartition> parts = c.partitionsFor(TOPIC, Duration.ofSeconds(30)).stream()
+                            .map(i -> new TopicPartition(TOPIC, i.partition())).toList();
+                    c.assign(parts);
+                    c.seekToBeginning(parts);
+                    Map<TopicPartition, Long> end = c.endOffsets(parts);
+                    while (running) {
+                        for (ConsumerRecord<String, String> r : c.poll(Duration.ofMillis(500))) apply(r.key(), r.value());
+                        if (loaded.getCount() > 0 && parts.stream().allMatch(tp -> c.position(tp) >= end.get(tp))) loaded.countDown();
+                    }
+                } catch (Exception e) {
+                    log.error("mapping registry lost Kafka; retrying in 5 s: {}", e.toString());
+                    try {
+                        Thread.sleep(5_000);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
                 }
-            } catch (Exception e) {
-                log.error("mapping registry stopped", e);
             }
         }, "mapping-registry");
         thread.setDaemon(true);
