@@ -133,6 +133,8 @@ async def test_a_proposal_changes_nothing_until_a_manager_approves_it(rules_clie
     r = await chat(rules_client, tokens["acme"], "Book vehicle 3 for service")
     assert len(r["proposals"]) == 1
     action_id = r["proposals"][0]["action_id"]
+    # The depot's 9:00 drop-off in India, the same slot the service plan books.
+    assert r["proposals"][0]["scheduled_for"].endswith("T09:00:00+05:30")
 
     pending = (await rules_client.get("/v1/copilot/actions", headers=bearer(tokens["acme"]))).json()["items"]
     assert action_id in [a["id"] for a in pending]

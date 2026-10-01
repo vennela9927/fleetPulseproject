@@ -7,13 +7,14 @@ change nothing until a fleet manager approves them.
 import json
 import re
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import Request
 
 from ..auth import Principal
 from ..db import ensure_user, tenant_tx
+from ..maintenance import DEPOT_TZ, slot_time
 from ..routers import maintenance
 
 MAX_PROPOSALS_PER_TURN = 3
@@ -309,8 +310,8 @@ class Toolbox:
     async def _t_propose_service_booking(self, vehicle_id: int, reason: str, days_from_now: int = 1) -> dict[str, Any]:
         if len(self.proposals) >= MAX_PROPOSALS_PER_TURN:
             return {"error": f"at most {MAX_PROPOSALS_PER_TURN} proposals per request; ask the user to confirm first"}
-        when = (datetime.now(UTC) + timedelta(days=max(0, min(int(days_from_now), 7)))).replace(
-            hour=9, minute=0, second=0, microsecond=0)
+        # The depot's 9:00 drop-off, as the service plan books it (not 9:00 UTC, which is 14:30 in India).
+        when = slot_time(datetime.now(DEPOT_TZ).date() + timedelta(days=max(0, min(int(days_from_now), 7))))
         async with tenant_tx(self.request.app.state.pg, self.user) as conn:
             v = await (await conn.execute("""
                 SELECT v.id, trim(v.vin) AS vin, f.home_depot_id, d.name AS depot FROM vehicle v
