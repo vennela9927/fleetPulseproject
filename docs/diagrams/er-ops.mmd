@@ -1,0 +1,41 @@
+erDiagram
+  VEHICLE ||--o{ ALERT : raises
+  ALERT_RULE ||--o{ ALERT : defines
+  VEHICLE ||--o{ RISK_SCORE : "scored by"
+  RISK_MODEL ||--o{ RISK_SCORE : produces
+  VEHICLE ||--o{ MAINTENANCE_EVENT : "has history"
+  DTC_CODE ||--o{ MAINTENANCE_EVENT : "reported as"
+  VEHICLE ||--o{ SERVICE_BOOKING : "booked in"
+  DEPOT ||--o{ SERVICE_BOOKING : hosts
+  VEHICLE ||--o{ FAULT_SIGNATURE : "fingerprinted as"
+  APP_USER ||--o{ AGENT_ACTION : "requests, decides"
+  APP_USER ||--o{ SERVICE_BOOKING : creates
+  ALERT { bigint id PK
+    uuid tenant_id "DENORM for RLS"
+    text rule_code FK
+    text dedup_key UK
+    text status }
+  RISK_SCORE { bigint vehicle_id PK
+    timestamptz scored_at PK
+    text model_version FK
+    real failure_prob_7d }
+  MAINTENANCE_EVENT { bigint id PK
+    bigint vehicle_id FK
+    text kind
+    numeric cost_usd }
+  SERVICE_BOOKING { bigint id PK
+    bigint depot_id FK
+    timestamptz scheduled_for
+    text source "USER or AGENT" }
+  FAULT_SIGNATURE { bigint id PK
+    vector16 embedding
+    text outcome_component }
+  AGENT_ACTION { bigint id PK
+    text tool
+    jsonb arguments
+    text status "PROPOSED..EXECUTED" }
+  AUDIT_LOG { bigint id PK
+    text actor_id
+    text action
+    bytea prev_hash
+    bytea row_hash }

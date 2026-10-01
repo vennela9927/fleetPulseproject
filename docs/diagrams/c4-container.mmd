@@ -1,0 +1,27 @@
+flowchart TB
+  SIM["Simulator<br/>Java 21, 100K vehicles"] -->|"HTTPS JSON batches, X-Api-Key"| GW["Ingest gateway<br/>Spring Boot, virtual threads"]
+  GW -->|"Kafka, acks=all, key=VIN"| RAW[("telemetry.raw<br/>24 partitions")]
+  RAW -->|Kafka| NORM["Normalizer<br/>Kafka Streams, exactly-once"]
+  MAP[("oem.mappings<br/>compacted")] -.->|Kafka| NORM
+  MAP -.->|Kafka| GW
+  NORM -->|"invalid / unknown maker"| DLQ[("telemetry.dlq")]
+  NORM -->|Kafka| CAN[("telemetry.canonical<br/>24 partitions")]
+  CAN -->|Kafka| SP["Stream processor<br/>alert rules, sinks"]
+  SP -->|"JDBC, idempotent"| PG[("Postgres 16 + pgvector<br/>3NF, RLS, audit chain")]
+  SP -->|"RESP, pipelined"| RD[("Redis<br/>live state, geo, pub/sub")]
+  SP -->|"HTTP, dedup tokens"| CH[("ClickHouse<br/>telemetry + rollups")]
+  CH -.->|"S3 API, TTL 30 d"| OBJ[("S3-compatible store")]
+  CH -->|"HTTP"| ML["ML jobs<br/>train, score, drift"]
+  ML -->|"SQL"| PG
+  API["API<br/>FastAPI, Python 3.12"] -->|"SQL, RLS"| PG
+  API -->|RESP| RD
+  API -->|"HTTP, row policy"| CH
+  API -->|"OIDC JWKS"| KC["Keycloak"]
+  API -->|"HTTPS"| GEM["Gemini"]
+  WEB["Web<br/>React + MapLibre"] -->|"HTTPS JSON, SSE"| API
+  classDef store fill:#fff7e6,stroke:#d48806,color:#222
+  classDef svc fill:#e6f0ff,stroke:#1f6feb,color:#111
+  classDef ext fill:#eeeeee,stroke:#888,color:#222
+  class RAW,CAN,DLQ,MAP,PG,RD,CH,OBJ store
+  class SIM,GW,NORM,SP,API,WEB,ML svc
+  class KC,GEM ext

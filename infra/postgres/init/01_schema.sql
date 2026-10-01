@@ -172,6 +172,9 @@ CREATE TABLE alert (
     resolved_at     timestamptz,
     details         jsonb NOT NULL DEFAULT '{}'
 );
+-- "Latest alerts" for one tenant: an index scan that stops at the page size instead of a
+-- sort of every alert (259 ms -> 5 ms at 42K alerts, see docs/evidence/query-plans.md).
+CREATE INDEX alert_tenant_opened ON alert(tenant_id, opened_at DESC, id DESC);
 
 CREATE TABLE risk_model (
     version      text PRIMARY KEY,

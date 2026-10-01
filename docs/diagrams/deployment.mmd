@@ -1,0 +1,34 @@
+flowchart TB
+  subgraph Cloud["AWS (values-aws.yaml) or GCP (values-gcp.yaml)"]
+    subgraph K8S["Kubernetes cluster (EKS / GKE), namespace fleetpulse"]
+      ING["Ingress, TLS<br/>NetworkPolicy"]
+      GW2["ingest-gateway<br/>HPA 3-12, CPU 70%"]
+      N2["normalizer x3"]
+      SP2["stream-processor x3"]
+      API2["api<br/>HPA 3-10"]
+      WEB2["web x2"]
+      JOB["ml CronJobs<br/>train, score, drift"]
+    end
+    MSK[("Managed Kafka<br/>MSK: 3 brokers, TLS")]
+    RDS[("Managed Postgres<br/>RDS, encrypted, multi-AZ in prod")]
+    EC[("Managed Redis<br/>ElastiCache, TLS + at rest")]
+    CHC[("ClickHouse<br/>ClickHouse Cloud or in-cluster")]
+    S3B[("Object storage<br/>S3, SSE-KMS")]
+    SEC["Secrets manager<br/>via External Secrets"]
+  end
+  ING --> API2
+  ING --> WEB2
+  ING --> GW2
+  GW2 --> MSK
+  MSK --> N2
+  MSK --> SP2
+  SP2 --> RDS
+  SP2 --> EC
+  SP2 --> CHC
+  API2 --> RDS
+  API2 --> EC
+  API2 --> CHC
+  JOB --> CHC
+  JOB --> RDS
+  CHC --> S3B
+  SEC -.-> K8S

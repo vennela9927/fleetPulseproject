@@ -1,0 +1,21 @@
+sequenceDiagram
+  autonumber
+  actor M as Fleet manager
+  participant W as Web
+  participant A as API
+  participant G as Gemini
+  participant P as Postgres (RLS)
+  M->>W: "Book the riskiest vehicle for service"
+  W->>A: POST /v1/copilot/chat (JWT)
+  A->>G: prompt + tool schemas (no data yet)
+  G-->>A: call at_risk_vehicles()
+  A->>P: SELECT as fleet_app, app.tenant_id from JWT
+  P-->>A: caller's vehicles only
+  A->>G: tool result (instruction-like text flagged)
+  G-->>A: call propose_service_booking(vehicle, depot)
+  A->>P: INSERT agent_action PROPOSED + audit row (one tx)
+  A-->>W: reply + proposal, nothing booked
+  M->>W: Approve
+  W->>A: POST /v1/copilot/actions/{id}/approve (manager role)
+  A->>P: re-check bay, INSERT service_booking, UPDATE action, audit row (one tx)
+  A-->>W: booked, audit trail: proposed by copilot, approved by manager

@@ -1,0 +1,47 @@
+erDiagram
+  TENANT ||--o{ FLEET : owns
+  TENANT ||--o{ DEPOT : runs
+  TENANT ||--o{ APP_USER : employs
+  TENANT ||--o{ SUBSCRIPTION : pays
+  SUBSCRIPTION_PLAN ||--o{ SUBSCRIPTION : prices
+  DEPOT ||--o{ FLEET : "home of"
+  FLEET ||--o{ VEHICLE : contains
+  OEM ||--o{ VEHICLE_MODEL : makes
+  VEHICLE_MODEL ||--o{ VEHICLE : "is a"
+  VEHICLE ||--o{ DRIVER_ASSIGNMENT : "driven via"
+  DRIVER ||--o{ DRIVER_ASSIGNMENT : "assigned via"
+  VEHICLE ||--o{ TRIP : makes
+  OEM ||--o{ OEM_MAPPING : "versioned by"
+  TENANT { uuid id PK
+    text name UK }
+  FLEET { bigint id PK
+    uuid tenant_id FK
+    bigint home_depot_id FK }
+  DEPOT { bigint id PK
+    uuid tenant_id FK
+    float lat_lon
+    int radius_m }
+  VEHICLE { bigint id PK
+    char17 vin UK
+    bigint fleet_id FK
+    uuid tenant_id FK "DENORM, composite FK"
+    smallint model_id FK }
+  VEHICLE_MODEL { smallint id PK
+    smallint oem_id FK
+    text powertrain
+    numeric battery_kwh }
+  DRIVER { bigint id PK
+    uuid tenant_id FK
+    text full_name "PII, erasable"
+    text licence_hash }
+  DRIVER_ASSIGNMENT { bigint vehicle_id PK
+    timestamptz valid_from PK
+    bigint driver_id FK }
+  TRIP { bigint id PK
+    timestamptz started_at PK "monthly partitions"
+    bigint vehicle_id FK }
+  OEM_MAPPING { bigint id PK
+    text oem_code
+    int version
+    jsonb spec
+    text status }

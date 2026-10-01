@@ -1,0 +1,26 @@
+sequenceDiagram
+  autonumber
+  participant S as Simulator (OEM cloud)
+  participant GW as Ingest gateway
+  participant K as Kafka
+  participant N as Normalizer (EOS v2)
+  participant C as ClickHouse sink
+  S->>GW: POST batch (500 events)
+  GW->>K: produce, acks=all
+  Note over K: broker killed (SIGKILL)
+  K--xGW: timeout / not leader
+  GW-->>S: 503 + Retry-After (nothing acknowledged)
+  Note over GW: 5 failures: circuit opens, fast 503s
+  S->>S: keep batch, back off, retry (never drop)
+  Note over K: broker restarted, healthy after 70 s
+  S->>GW: retry same batch (may duplicate)
+  GW->>K: produce, acks=all
+  GW-->>S: 202 accepted (durable)
+  K->>N: consume raw
+  N->>N: dedup on (VIN, seq) window, drop repeat
+  N->>K: canonical + offsets in one transaction
+  K->>C: consume canonical
+  C->>K: commit intent (first..last)
+  C->>C: INSERT with token topicId:partition:first-last
+  C->>K: commit last+1
+  Note over S,C: reconciled: 2,874,026 sent = stored = rollup

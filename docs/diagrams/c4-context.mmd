@@ -1,0 +1,22 @@
+flowchart LR
+  FM["Fleet manager<br/><i>plans inspections, approves bookings</i>"]
+  WS["Workshop / depot<br/><i>records inspection results</i>"]
+  PA["Platform admin<br/><i>onboards makers, watches feeds</i>"]
+  OEM["OEM clouds x4<br/>Aurora, Borealis, Cygnus, Draco<br/><i>push raw telemetry</i>"]
+  FP(["<b>FleetPulse</b><br/>connected-vehicle fleet health:<br/>live alerts, 7-day breakdown risk,<br/>service plan, copilot"])
+  KC["Keycloak<br/><i>identity provider (OIDC)</i>"]
+  LLM["Gemini API<br/><i>LLM for the copilot (optional)</i>"]
+  S3["Object storage<br/><i>S3 API: cold telemetry, model artefacts</i>"]
+  FM -->|HTTPS, browser| FP
+  WS -->|HTTPS, browser| FP
+  PA -->|HTTPS, browser| FP
+  OEM -->|HTTPS batches + API key| FP
+  FP -->|OIDC / JWKS| KC
+  FP -->|HTTPS, tool results only| LLM
+  FP -->|S3 API| S3
+  classDef sys fill:#1f6feb,color:#fff,stroke:#0b3d91
+  classDef ext fill:#eeeeee,stroke:#888,color:#222
+  classDef person fill:#dbeafe,stroke:#1f6feb,color:#111
+  class FP sys
+  class OEM,KC,LLM,S3 ext
+  class FM,WS,PA person

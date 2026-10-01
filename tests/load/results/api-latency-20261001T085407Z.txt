@@ -1,0 +1,11 @@
+API latency, 2026-10-01 08:54 UTC, local Docker stack (simulator streaming 100K vehicles)
+3 users x 10.0/s for 120s: 624 requests, 5.1 req/s, status codes {200: 623, 500: 1}
+
+endpoint                             n   p50 ms   p95 ms   p99 ms   max ms
+/v1/vehicles?limit=50              105     66.2    513.6   1035.9   1138.1
+/v1/risk?limit=50                  105     77.7    587.0   1313.3   1436.6
+/v1/alerts?limit=50                104     65.0    595.8    846.0    987.9
+/v1/fleet/summary                  104   1380.1   2649.5   7406.9   7447.3
+/v1/maintenance/overview           104   1020.2   2272.0   2464.9   2681.4
+/v1/vehicles/{vid}                 102    125.6    801.1   1628.1   1869.5
+ALL                                624    150.9   1896.9   2649.5   7447.3
