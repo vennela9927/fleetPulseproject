@@ -6,7 +6,8 @@ import { hasRole } from '../auth'
 import { SeverityBadge } from '../components/SeverityBadge'
 import { alertDetail, dateTime, relTime, ruleLabel } from '../format'
 
-const RULES = ['ENGINE_OVERHEAT', 'CRITICAL_DTC', 'LOW_12V_BATTERY', 'HARSH_DRIVING', 'EV_LOW_SOC', 'EXCESSIVE_IDLING']
+const RULES = ['ENGINE_OVERHEAT', 'SENSOR_FAULT', 'CRITICAL_DTC', 'HIGH_FAILURE_RISK', 'LOW_12V_BATTERY', 'HARSH_DRIVING',
+  'EV_LOW_SOC', 'EXCESSIVE_IDLING']
 
 export function Alerts() {
   const qc = useQueryClient()
