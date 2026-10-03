@@ -15,11 +15,11 @@ ACME = "11111111-1111-1111-1111-111111111111"
 ZENITH = "22222222-2222-2222-2222-222222222222"
 
 
-def pytest_asyncio_loop_factories(config, item):
-    # Async psycopg cannot use Windows' default Proactor loop.
-    if sys.platform == "win32":
+if sys.platform == "win32":
+    # Async psycopg cannot use Windows' default Proactor loop. Defined only on Windows:
+    # pytest-asyncio rejects a hook that returns None, and elsewhere the default loop is fine.
+    def pytest_asyncio_loop_factories(config, item):
         return {"selector": asyncio.SelectorEventLoop}
-    return None
 
 
 def _stack_is_up() -> bool:
