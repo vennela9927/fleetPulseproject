@@ -45,12 +45,14 @@ module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 20.24"
 
-  cluster_name                   = local.name
-  cluster_version                = "1.31"
-  vpc_id                         = module.vpc.vpc_id
-  subnet_ids                     = module.vpc.private_subnets
-  cluster_endpoint_public_access = true
-  enable_irsa                    = true
+  cluster_name    = local.name
+  cluster_version = "1.31"
+  vpc_id          = module.vpc.vpc_id
+  subnet_ids      = module.vpc.private_subnets
+  # Private API endpoint: operators reach it from inside the VPC (VPN or bastion), not the internet.
+  cluster_endpoint_public_access  = false
+  cluster_endpoint_private_access = true
+  enable_irsa                     = true
 
   eks_managed_node_groups = {
     app = {
@@ -135,6 +137,12 @@ resource "aws_elasticache_replication_group" "redis" {
   security_group_ids         = [aws_security_group.data.id]
 }
 
+# ------------------------------------------------------------------ encryption key for data at rest (rotated yearly)
+resource "aws_kms_key" "data" {
+  description         = "${local.name} data at rest: Kafka volumes and S3 buckets"
+  enable_key_rotation = true
+}
+
 # ------------------------------------------------------------------ Kafka (MSK, 3 brokers across AZs)
 resource "aws_msk_cluster" "kafka" {
   cluster_name           = local.name
@@ -150,7 +158,10 @@ resource "aws_msk_cluster" "kafka" {
     }
   }
   encryption_info {
+    encryption_at_rest_kms_key_arn = aws_kms_key.data.arn
     encryption_in_transit {
+      # Brokers accept TLS and plaintext from inside the private subnets until the services'
+      # Kafka clients are configured for TLS (port 9094); see .trivyignore (AWS-0073).
       client_broker = "TLS_PLAINTEXT"
       in_cluster    = true
     }
@@ -176,7 +187,11 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "data" {
   for_each = aws_s3_bucket.data
   bucket   = each.value.id
   rule {
-    apply_server_side_encryption_by_default { sse_algorithm = "aws:kms" }
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.data.arn
+    }
+    bucket_key_enabled = true
   }
 }
 

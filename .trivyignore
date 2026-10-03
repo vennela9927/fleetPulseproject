@@ -1,0 +1,10 @@
+# Accepted findings, each with its reason. Reviewed 2026-10-04.
+
+# MSK client-broker traffic allows plaintext inside the private subnets: the services' Kafka
+# clients are not yet configured for TLS (port 9094). In-cluster broker traffic is encrypted.
+# Next step: add security.protocol=SSL to every Kafka client and set client_broker = "TLS".
+AWS-0073
+
+# EKS worker nodes need outbound internet (through the NAT gateway) to pull images and reach
+# AWS APIs; this is the terraform-aws-modules/eks default "egress_all" rule.
+AWS-0104

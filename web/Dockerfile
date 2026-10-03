@@ -9,7 +9,9 @@ ARG VITE_KEYCLOAK_URL=http://localhost:8080
 ENV VITE_KEYCLOAK_URL=$VITE_KEYCLOAK_URL
 RUN npm run build
 
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.30-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /web/dist /usr/share/nginx/html
 EXPOSE 8080
+# nginx-unprivileged already runs as uid 101 (nginx); stated explicitly so it cannot drift to root.
+USER 101
